@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "krow/signals/fault-response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "error", "recoverable"],
+  "properties": {
+    "type": { "const": "fault" },
+    "workflow_id": { "type": "string" },
+    "mode": { "type": "string", "minLength": 1 },
+    "phase": { "type": "string", "enum": ["clarify", "execute", "verify", "capture"] },
+    "unit_id": { "type": "string", "minLength": 1 },
+    "expected_schema": { "type": "string" },
+    "issues": { "type": "array", "items": { "type": "string" } },
+    "error": { "type": "string", "minLength": 1 },
+    "recoverable": { "type": "boolean" }
+  }
+}

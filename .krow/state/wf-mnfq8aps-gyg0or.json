@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "1.0.0",
+  "workflowId": "wf-mnfq8aps-gyg0or",
+  "description": "test retry",
+  "status": "completed",
+  "phase": "verify",
+  "pendingDecisions": [],
+  "decisionHistory": [],
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "test task",
+      "scope": [
+        "a.ts"
+      ],
+      "context": [],
+      "dependsOn": [],
+      "status": "done",
+      "verifyAttempts": 2,
+      "executeOutput": {
+        "summary": "fixed it",
+        "changedFiles": [
+          "a.ts"
+        ],
+        "notes": []
+      },
+      "verifyOutput": {
+        "passed": true,
+        "issues": [],
+        "summary": "all good"
+      }
+    }
+  ],
+  "currentTaskIndex": 0,
+  "maxVerifyAttempts": 3,
+  "createdAt": "2026-04-01T07:30:53.632Z",
+  "updatedAt": "2026-04-01T07:30:56.056Z",
+  "clarifyOutput": {
+    "ready": true,
+    "summary": "test",
+    "assumptions": [],
+    "verifyFocus": [],
+    "decisions": []
+  },
+  "planOutput": {
+    "approach": "test",
+    "risks": [],
+    "tasks": [
+      {
+        "id": "t1",
+        "title": "test task",
+        "scope": [
+          "a.ts"
+        ],
+        "context": [],
+        "dependsOn": []
+      }
+    ]
+  }
+}

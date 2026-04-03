@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0.0",
+  "workflowId": "wf-mniegjop-58vyn6",
+  "description": "simple",
+  "status": "phase_plan",
+  "phase": "plan",
+  "pendingDecisions": [],
+  "decisionHistory": [],
+  "tasks": [],
+  "escalateAfter": 3,
+  "createdAt": "2026-04-03T04:24:41.640Z",
+  "updatedAt": "2026-04-03T04:24:41.941Z",
+  "clarifyOutput": {
+    "ready": true,
+    "summary": "done",
+    "assumptions": [],
+    "decisions": []
+  }
+}

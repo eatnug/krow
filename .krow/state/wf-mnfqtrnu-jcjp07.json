@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0.0",
+  "workflowId": "wf-mnfqtrnu-jcjp07",
+  "description": "clean escalation",
+  "status": "completed",
+  "phase": "verify",
+  "pendingDecisions": [],
+  "decisionHistory": [],
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "t",
+      "scope": [
+        "x"
+      ],
+      "context": [],
+      "dependsOn": [],
+      "status": "done",
+      "verifyAttempts": 4,
+      "executeOutput": {
+        "summary": "fixed",
+        "changedFiles": [
+          "x"
+        ],
+        "notes": []
+      },
+      "verifyOutput": {
+        "passed": true,
+        "issues": [],
+        "summary": "ok"
+      }
+    }
+  ],
+  "escalateAfter": 3,
+  "createdAt": "2026-04-01T07:47:35.369Z",
+  "updatedAt": "2026-04-01T07:47:38.837Z",
+  "clarifyOutput": {
+    "ready": true,
+    "summary": "t",
+    "assumptions": [],
+    "decisions": []
+  },
+  "planOutput": {
+    "approach": "t",
+    "risks": [],
+    "tasks": [
+      {
+        "id": "t1",
+        "title": "t",
+        "scope": [
+          "x"
+        ],
+        "context": [],
+        "dependsOn": []
+      }
+    ]
+  }
+}
