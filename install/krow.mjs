@@ -130,6 +130,60 @@ Otherwise, run: \`npx krow start "$request"\`
 - For batch responses, spawn all agents in a SINGLE message to maximize parallelism.
 `;
 
+const GEMINI_WORK_COMMAND = `# ${MANAGED_MARKER}
+
+description = "Run explicit engineering work through a structured 4-phase harness."
+
+prompt = """
+Treat {{args}} as explicit work intent.
+
+## Startup
+
+If no arguments were supplied, ask the user what they want to do first.
+
+Otherwise, run via run_shell_command: \`npx krow start "{{args}}"\`
+
+## Loop
+
+1. Parse the JSON response from the last krow command.
+2. Check the \`type\` field and act accordingly:
+
+### type = "phase"
+- Execute the phase yourself, but restrict the tools you use based on the \`capability\` field:
+  - "read": only use read_file, grep_search, list_directory, and run_shell_command (limited to git and ls commands only)
+  - "write": use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command
+  - "full": use all available tools without restriction
+- Follow the instructions in the \`prompt\` field.
+- When the phase work is complete, collect your result as JSON.
+- Run the command in \`onComplete\` via run_shell_command, replacing \`'<JSON>'\` with the minified JSON result (single-quoted).
+
+### type = "batch"
+- Process ALL entries in \`responses\` — each is a phase response.
+- For each entry, apply the same capability-based tool restrictions described above.
+- Execute each phase following its \`prompt\` field.
+- As each phase completes, run its \`onComplete\` command via run_shell_command with the minified JSON result.
+
+### type = "gate"
+- If \`gate\` = "clarify": Present each decision in \`decisions\` to the user. Collect their answers. Run \`onComplete\` via run_shell_command with the answers JSON.
+- If \`gate\` = "plan": Present \`tasks\`, \`approach\`, and \`risks\` to the user. If they approve, run the approve command in \`onComplete\` via run_shell_command. If they want changes, run the adjust command mentioned in \`instructions\`.
+- If \`gate\` = "verify": A task has failed verification multiple times. Present \`lastIssues\` and \`verifyAttempts\` to the user. Follow the \`instructions\` field — it contains the continue and stop commands.
+
+### type = "done"
+- Report the \`message\` to the user. Stop.
+
+### type = "fault"
+- If \`recoverable\` = true, review the \`issues\` and retry.
+- If \`recoverable\` = false, report the \`error\` to the user and stop.
+
+## Rules
+
+- NEVER skip the orchestrator commands. Every phase transition goes through krow.
+- Always pass JSON as a single-quoted string in commands.
+- Minify JSON before passing to commands (no newlines).
+- Respect capability-based tool restrictions strictly — do not use disallowed tools for a phase.
+"""
+`;
+
 function printUsage() {
   process.stdout.write(
     [
@@ -137,7 +191,7 @@ function printUsage() {
       "  krow init [--force] [--home <dir>]",
       "",
       "Commands:",
-      "  init    Install Codex $work and Claude Code /work wrappers",
+      "  init    Install Codex $work, Claude Code /work, and Gemini CLI /work wrappers",
     ].join("\n") + "\n",
   );
 }
@@ -205,6 +259,11 @@ async function runInit({ force, home }) {
       path: path.join(home, ".claude", "commands", "work.md"),
       content: CLAUDE_WORK_COMMAND,
     },
+    {
+      label: "Gemini CLI /work command",
+      path: path.join(home, ".gemini", "commands", "work.toml"),
+      content: GEMINI_WORK_COMMAND,
+    },
   ];
 
   const results = [];
@@ -217,7 +276,7 @@ async function runInit({ force, home }) {
     [
       `Installed from ${packageRoot}`,
       ...results.map((result) => `${result.status}: ${result.label} -> ${result.path}`),
-      "Restart Codex and Claude Code, or reload skills/commands if they are already running.",
+      "Restart Codex, Claude Code, and Gemini CLI, or reload skills/commands if they are already running.",
     ].join("\n") + "\n",
   );
 }

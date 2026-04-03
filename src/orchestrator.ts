@@ -390,9 +390,9 @@ function applyPlan(state: WorkflowState, input: unknown): MaybeResult {
   next.tasks = v.value.tasks.map((td) => ({
     id: td.id,
     title: td.title,
-    scope: td.scope,
-    context: td.context,
-    dependsOn: td.dependsOn,
+    scope: Array.isArray(td.scope) ? td.scope : td.scope ? [td.scope] : [],
+    context: Array.isArray(td.context) ? td.context : td.context ? [String(td.context)] : [],
+    dependsOn: Array.isArray(td.dependsOn) ? td.dependsOn : td.dependsOn ? [td.dependsOn] : [],
     status: "pending" as const,
     verifyAttempts: 0,
   }));

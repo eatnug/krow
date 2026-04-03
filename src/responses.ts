@@ -60,7 +60,8 @@ function executeContext(state: WorkflowState, task: Task): ContextSpec {
   const inputs = [];
   if (state.clarifyOutput) inputs.push({ type: "data" as const, ref: "clarifyOutput" });
   if (state.planOutput) inputs.push({ type: "data" as const, ref: "planOutput.approach" });
-  for (const c of task.context) inputs.push({ type: "file" as const, ref: c });
+  const ctx = Array.isArray(task.context) ? task.context : task.context ? [task.context] : [];
+  for (const c of ctx) inputs.push({ type: "file" as const, ref: c });
   return { isolation: "isolated", inputs };
 }
 

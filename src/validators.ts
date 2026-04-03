@@ -102,7 +102,7 @@ export function validatePlanOutput(input: unknown): ValidationResult<PlanOutput>
       if (!isObject(t)) { issues.push(`tasks[${i}] must be an object`); continue; }
       if (!isString(t.id)) issues.push(`tasks[${i}].id must be a string`);
       if (!isString(t.title)) issues.push(`tasks[${i}].title must be a string`);
-      if (!isArray(t.scope)) issues.push(`tasks[${i}].scope must be an array`);
+      if (!isArray(t.scope) && !isString(t.scope)) issues.push(`tasks[${i}].scope must be an array or string`);
     }
   }
 

@@ -143,7 +143,8 @@ export function buildExecutePrompt(state: WorkflowState, task: Task): string {
   parts.push(`Files/modules to modify: ${task.scope.join(", ") || "as needed"}`);
   parts.push(``);
   parts.push(`## Task context`);
-  parts.push(`Files/data to read: ${task.context.join(", ") || "as needed"}`);
+  const ctx = Array.isArray(task.context) ? task.context : task.context ? [task.context] : [];
+  parts.push(`Files/data to read: ${ctx.join(", ") || "as needed"}`);
   parts.push(``);
 
   if (state.clarifyOutput) {
