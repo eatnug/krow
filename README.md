@@ -5,19 +5,22 @@
 It packages three things:
 - a lean execution contract
 - a runtime-agnostic state and signal model
-- host wrappers that expose explicit work intent without polluting the core prompts
+- host wrappers that expose explicit `krow` entrypoints without polluting the core prompts
 
 ## Install
 
-From this repo:
+From npm:
 
 ```bash
-npx krow init
+npx krow-cli init
 ```
 
+The published package name is `krow-cli`. The installed command remains `krow`.
+
 That installs:
-- Codex `$work`
-- Claude Code `/work`
+- Codex `$krow`
+- Claude Code `/krow`
+- Gemini CLI `/krow`
 
 ## Core stance
 
@@ -41,7 +44,8 @@ That installs:
 
 ## Usage
 
-- In Codex, invoke `$work ...`
-- In Claude Code, invoke `/work ...`
+- In Codex, invoke `$krow ...`
+- In Claude Code, invoke `/krow ...`
+- In Gemini CLI, invoke `/krow ...`
 
-The host wrapper is only an entry mechanism. The core system operates on explicit work intent, evidence-backed clarification, and `clarify -> execute -> verify`.
+The host wrapper is only an entry mechanism. The core system still operates on explicit work intent, evidence-backed clarification, and `clarify -> execute -> verify`.

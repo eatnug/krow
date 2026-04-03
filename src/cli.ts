@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   createWorkflow,
   submitWorkItems,
@@ -49,6 +53,29 @@ function handleResult(result: { state?: WorkflowState; response: ProtocolRespons
   outputJSON(result.response);
 }
 
+function runInstallerInit(options: { force: boolean; home: string }): Promise<void> {
+  const installerPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../install/krow.mjs");
+  const args = ["init"];
+  if (options.force) args.push("--force");
+  args.push("--home", options.home);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [installerPath, ...args], { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`Installer exited due to signal ${signal}`));
+        return;
+      }
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`Installer exited with code ${code ?? 1}`));
+    });
+  });
+}
+
 // ============================================================================
 // CLI
 // ============================================================================
@@ -57,6 +84,15 @@ const program = new Command()
   .name("krow")
   .description("Agent harness CLI")
   .version("0.1.0");
+
+program
+  .command("init")
+  .description("Install Codex, Claude Code, and Gemini CLI wrappers")
+  .option("--force", "Overwrite managed files even if they already exist")
+  .option("--home <dir>", "Target home directory", os.homedir())
+  .action(async (options: { force?: boolean; home: string }) => {
+    await runInstallerInit({ force: Boolean(options.force), home: options.home });
+  });
 
 program
   .command("start")

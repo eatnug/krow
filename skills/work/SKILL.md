@@ -1,11 +1,11 @@
 ---
-name: work
-description: Primary entry skill for actionable engineering work. Use whenever the user wants code, files, tests, config, or other project artifacts to be created, fixed, refactored, removed, investigated, or verified rather than merely explained.
+name: krow
+description: Primary krow entry skill for actionable engineering work. Use whenever the user wants code, files, tests, config, or other project artifacts to be created, fixed, refactored, removed, investigated, or verified rather than merely explained.
 ---
 
-# Work
+# krow
 
-Use this as the broad work-intake skill.
+Use this as the broad krow entry skill.
 
 Typical requests:
 

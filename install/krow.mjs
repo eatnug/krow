@@ -7,14 +7,14 @@ import { fileURLToPath } from "node:url";
 
 const MANAGED_MARKER = "Managed by krow init";
 
-const CODEX_WORK_SKILL = `---
-name: work
-description: Explicit work-intake skill for actionable engineering tasks. Use only when the user explicitly invokes \`$work\` to request code, files, tests, config, or other artifacts to be created, fixed, refactored, removed, investigated, or verified.
+const CODEX_KROW_SKILL = `---
+name: krow
+description: Primary krow entry skill for actionable engineering work. Use only when the user explicitly invokes \`$krow\` to request code, files, tests, config, or other artifacts to be created, fixed, refactored, removed, investigated, or verified.
 ---
 
 <!-- ${MANAGED_MARKER} -->
 
-# Work
+# krow
 
 Treat the current user message as explicit work intent.
 
@@ -67,8 +67,8 @@ If $ARGUMENTS is empty, ask the user what they want to do first.
 - For batch responses, spawn all agents in a SINGLE message to maximize parallelism.
 `;
 
-const CLAUDE_WORK_COMMAND = `---
-description: Run explicit engineering work through a structured 4-phase harness.
+const CLAUDE_KROW_COMMAND = `---
+description: Run actionable engineering work through the krow harness.
 argument-hint: "<request>"
 arguments:
   - request
@@ -77,7 +77,7 @@ allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 <!-- ${MANAGED_MARKER} -->
 
-# Work
+# krow
 
 Treat \`$request\` as explicit work intent.
 
@@ -130,9 +130,9 @@ Otherwise, run: \`npx krow start "$request"\`
 - For batch responses, spawn all agents in a SINGLE message to maximize parallelism.
 `;
 
-const GEMINI_WORK_COMMAND = `# ${MANAGED_MARKER}
+const GEMINI_KROW_COMMAND = `# ${MANAGED_MARKER}
 
-description = "Run explicit engineering work through a structured 4-phase harness."
+description = "Run actionable engineering work through the krow harness."
 
 prompt = """
 Treat {{args}} as explicit work intent.
@@ -191,7 +191,7 @@ function printUsage() {
       "  krow init [--force] [--home <dir>]",
       "",
       "Commands:",
-      "  init    Install Codex $work, Claude Code /work, and Gemini CLI /work wrappers",
+      "  init    Install Codex $krow, Claude Code /krow, and Gemini CLI /krow wrappers",
     ].join("\n") + "\n",
   );
 }
@@ -244,25 +244,25 @@ async function writeManagedFile(targetPath, content, force) {
   return exists ? "updated" : "created";
 }
 
-async function runInit({ force, home }) {
+export async function runInit({ force, home }) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const packageRoot = path.resolve(scriptDir, "..");
 
   const targets = [
     {
-      label: "Codex $work skill",
-      path: path.join(home, ".codex", "skills", "work", "SKILL.md"),
-      content: CODEX_WORK_SKILL,
+      label: "Codex $krow skill",
+      path: path.join(home, ".codex", "skills", "krow", "SKILL.md"),
+      content: CODEX_KROW_SKILL,
     },
     {
-      label: "Claude Code /work command",
-      path: path.join(home, ".claude", "commands", "work.md"),
-      content: CLAUDE_WORK_COMMAND,
+      label: "Claude Code /krow command",
+      path: path.join(home, ".claude", "commands", "krow.md"),
+      content: CLAUDE_KROW_COMMAND,
     },
     {
-      label: "Gemini CLI /work command",
-      path: path.join(home, ".gemini", "commands", "work.toml"),
-      content: GEMINI_WORK_COMMAND,
+      label: "Gemini CLI /krow command",
+      path: path.join(home, ".gemini", "commands", "krow.toml"),
+      content: GEMINI_KROW_COMMAND,
     },
   ];
 
@@ -281,7 +281,7 @@ async function runInit({ force, home }) {
   );
 }
 
-async function main() {
+export async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.command !== "init") {
     printUsage();
@@ -292,8 +292,12 @@ async function main() {
   await runInit(parsed);
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+const isDirectExecution = process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+
+if (isDirectExecution) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
+}
