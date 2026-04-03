@@ -53,10 +53,34 @@ function handleResult(result: { state?: WorkflowState; response: ProtocolRespons
   outputJSON(result.response);
 }
 
-function runInstallerInit(options: { force: boolean; home: string }): Promise<void> {
+function runInstallerInit(options: { force: boolean; home: string; global: boolean }): Promise<void> {
   const installerPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../install/krow.mjs");
   const args = ["init"];
   if (options.force) args.push("--force");
+  if (options.global) args.push("--global");
+  args.push("--home", options.home);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [installerPath, ...args], { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`Installer exited due to signal ${signal}`));
+        return;
+      }
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`Installer exited with code ${code ?? 1}`));
+    });
+  });
+}
+
+function runInstallerRemove(options: { global: boolean; home: string }): Promise<void> {
+  const installerPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../install/krow.mjs");
+  const args = ["remove"];
+  if (options.global) args.push("--global");
   args.push("--home", options.home);
 
   return new Promise((resolve, reject) => {
@@ -87,11 +111,21 @@ const program = new Command()
 
 program
   .command("init")
-  .description("Install Codex, Claude Code, and Gemini CLI wrappers")
+  .description("Install Codex, Claude Code, and Gemini CLI wrappers (local by default, use -g for global)")
   .option("--force", "Overwrite managed files even if they already exist")
-  .option("--home <dir>", "Target home directory", os.homedir())
-  .action(async (options: { force?: boolean; home: string }) => {
-    await runInstallerInit({ force: Boolean(options.force), home: options.home });
+  .option("-g, --global", "Install to home directory (global)")
+  .option("--home <dir>", "Target directory", process.cwd())
+  .action(async (options: { force?: boolean; global?: boolean; home: string }) => {
+    await runInstallerInit({ force: Boolean(options.force), global: Boolean(options.global), home: options.home });
+  });
+
+program
+  .command("remove")
+  .description("Remove installed Codex, Claude Code, and Gemini CLI wrappers")
+  .option("-g, --global", "Remove from home directory (global)")
+  .option("--home <dir>", "Target directory", process.cwd())
+  .action(async (options: { global?: boolean; home: string }) => {
+    await runInstallerRemove({ global: Boolean(options.global), home: options.home });
   });
 
 program

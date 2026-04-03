@@ -188,10 +188,17 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  krow init [--force] [--home <dir>]",
+      "  krow init [--force] [-g | --global] [--home <dir>]",
+      "  krow remove [-g | --global] [--home <dir>]",
       "",
       "Commands:",
-      "  init    Install Codex $krow, Claude Code /krow, and Gemini CLI /krow wrappers",
+      "  init      Install Codex $krow, Claude Code /krow, and Gemini CLI /krow wrappers",
+      "  remove    Remove installed Codex, Claude Code, and Gemini CLI wrappers",
+      "",
+      "Flags:",
+      "  --force         Overwrite managed files even if they already exist",
+      "  -g, --global    Install to / remove from home directory (global)",
+      "  --home <dir>    Target directory override",
     ].join("\n") + "\n",
   );
 }
@@ -199,12 +206,17 @@ function printUsage() {
 function parseArgs(argv) {
   const command = argv[0];
   let force = false;
-  let home = os.homedir();
+  let global = false;
+  let home = null;
 
   for (let index = 1; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--force") {
       force = true;
+      continue;
+    }
+    if (value === "--global" || value === "-g") {
+      global = true;
       continue;
     }
     if (value === "--home" && argv[index + 1]) {
@@ -214,7 +226,7 @@ function parseArgs(argv) {
     }
   }
 
-  return { command, force, home };
+  return { command, force, global, home };
 }
 
 async function pathExists(targetPath) {
@@ -244,7 +256,10 @@ async function writeManagedFile(targetPath, content, force) {
   return exists ? "updated" : "created";
 }
 
-export async function runInit({ force, home }) {
+export async function runInit({ force, global: isGlobal, home }) {
+  if (home == null) {
+    home = isGlobal ? os.homedir() : process.cwd();
+  }
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const packageRoot = path.resolve(scriptDir, "..");
 
@@ -281,15 +296,76 @@ export async function runInit({ force, home }) {
   );
 }
 
+export async function runRemove({ global: isGlobal, home }) {
+  if (home == null) {
+    home = isGlobal ? os.homedir() : process.cwd();
+  }
+
+  const targets = [
+    {
+      label: "Codex $krow skill",
+      path: path.join(home, ".codex", "skills", "krow", "SKILL.md"),
+    },
+    {
+      label: "Claude Code /krow command",
+      path: path.join(home, ".claude", "commands", "krow.md"),
+    },
+    {
+      label: "Gemini CLI /krow command",
+      path: path.join(home, ".gemini", "commands", "krow.toml"),
+    },
+  ];
+
+  const results = [];
+  for (const target of targets) {
+    const exists = await pathExists(target.path);
+    if (!exists) {
+      results.push({ ...target, status: "skipped (not found)" });
+      continue;
+    }
+
+    const content = await fs.readFile(target.path, "utf8");
+    if (!content.includes(MANAGED_MARKER)) {
+      results.push({ ...target, status: "skipped (not managed by krow)" });
+      continue;
+    }
+
+    await fs.unlink(target.path);
+    results.push({ ...target, status: "removed" });
+
+    // Try to remove empty parent directories
+    let dir = path.dirname(target.path);
+    while (dir !== home && dir !== path.dirname(dir)) {
+      try {
+        await fs.rmdir(dir);
+        dir = path.dirname(dir);
+      } catch {
+        break;
+      }
+    }
+  }
+
+  process.stdout.write(
+    [
+      `Remove targets in ${home}`,
+      ...results.map((result) => `${result.status}: ${result.label} -> ${result.path}`),
+    ].join("\n") + "\n",
+  );
+}
+
 export async function main() {
   const parsed = parseArgs(process.argv.slice(2));
-  if (parsed.command !== "init") {
-    printUsage();
-    process.exitCode = parsed.command ? 1 : 0;
+  if (parsed.command === "init") {
+    await runInit(parsed);
+    return;
+  }
+  if (parsed.command === "remove") {
+    await runRemove(parsed);
     return;
   }
 
-  await runInit(parsed);
+  printUsage();
+  process.exitCode = parsed.command ? 1 : 0;
 }
 
 const isDirectExecution = process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
