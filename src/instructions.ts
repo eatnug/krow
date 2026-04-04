@@ -57,9 +57,16 @@ export function resolveVerifyCommand(workflowId: string, taskId: string, action:
 export function phaseInstructions(phase: Phase, onComplete: string): string {
   return [
     `Execute the prompt for the "${phase}" phase.`,
-    `Return your output as a JSON array of work items: [{id, role, task, result?}, ...]`,
-    `If you can do it all yourself, return 1 item with result included.`,
-    `If complex, return multiple items (without result) — they'll be executed in parallel.`,
+    ``,
+    `CRITICAL OUTPUT REQUIREMENT: Your response MUST be a JSON array of work items. No prose, no markdown outside JSON, no explanation.`,
+    `Schema: [{ "id": string, "role": string, "task": string, "result"?: object }]`,
+    ``,
+    `Simple case (you do it yourself) — return 1 item with result:`,
+    `[{ "id": "main", "role": "main", "task": "did everything", "result": { ... } }]`,
+    ``,
+    `Complex case (needs parallel agents) — return multiple items WITHOUT result:`,
+    `[{ "id": "s1", "role": "analyst", "task": "..." }, { "id": "s2", "role": "reviewer", "task": "..." }]`,
+    ``,
     `Then run: ${onComplete}`,
   ].join("\n");
 }

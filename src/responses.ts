@@ -178,7 +178,7 @@ export function buildWorkItemBatchResponse(state: WorkflowState, work: ActiveWor
       context: { isolation: "isolated" as const, inputs: [] },
       output: { schema: "work-item-result", format: "json" as const },
       onComplete,
-      instructions: `Execute this work item. Return your result. Then run: ${onComplete}`,
+      instructions: `Execute this work item. Return your result as JSON (no prose, no markdown). Then run: ${onComplete}`,
     };
   });
 
