@@ -15,6 +15,12 @@ import {
   absoluteWorkflowStatePath,
   loadWorkflowState,
   saveWorkflowState,
+  unitBriefPath,
+  unitRelayPath,
+  unitResultPath,
+  unitStatusPath,
+  workflowTaskIndexPath,
+  workflowTaskRootPath,
 } from "./state-store.js";
 import type {
   CapabilityIntent,
@@ -28,9 +34,14 @@ import type {
   RouteKind,
   RouteSource,
   RuntimePhase,
+  WorkflowEffort,
+  WorkflowGraphStrategy,
+  WorkflowPriority,
   WorkflowState,
+  WorkflowUnit,
 } from "./types.js";
 import { validateWorkflowState } from "./validators.js";
+import { completedUnitIds, readyUnits } from "./workflow-graph.js";
 
 type FlagMap = Record<string, string | boolean>;
 
@@ -359,6 +370,339 @@ function summarizeObjective(message: string): string {
   return message.replace(/\s+/g, " ").trim();
 }
 
+function makeUnitId(index: number): string {
+  return `unit-${String(index).padStart(3, "0")}`;
+}
+
+function explicitDeliverables(message: string): { items: string[]; ordered: boolean } | undefined {
+  const lines = message
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const numbered = lines
+    .map((line) => line.match(/^\d+[.)]\s+(.+)$/)?.[1]?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (numbered.length >= 2) {
+    return { items: numbered, ordered: true };
+  }
+
+  const bullets = lines
+    .map((line) => line.match(/^[-*+]\s+(.+)$/)?.[1]?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (bullets.length >= 2) {
+    return { items: bullets, ordered: false };
+  }
+
+  return undefined;
+}
+
+function scopeKeyForFilePath(filePath: string): string {
+  const parts = filePath.split("/").filter(Boolean);
+  if (parts.length <= 2) {
+    return filePath;
+  }
+
+  const [root, second] = parts;
+  if ((root === "packages" || root === "services") && second) {
+    return `${root}/${second}`;
+  }
+
+  if ((root === "src" || root === "app" || root === "lib" || /^tests?$/i.test(root)) && second && !second.includes(".")) {
+    return `${root}/${second}`;
+  }
+
+  return parts.slice(0, Math.min(parts.length - 1, 2)).join("/");
+}
+
+function inferUnitPriority(objective: string, anchors: RequestAnchors, kind: WorkflowUnit["kind"]): WorkflowPriority {
+  if (kind === "integration") {
+    return "high";
+  }
+  if (anchors.errors.length > 0 || anchors.tests.length > 0 || anchors.tickets.length > 0) {
+    return "high";
+  }
+  if (looksLikeFix(objective) || looksLikeCreate(objective)) {
+    return "medium";
+  }
+  return "low";
+}
+
+function inferUnitEffort(objective: string, scope: string[], dependencies: string[], kind: WorkflowUnit["kind"]): WorkflowEffort {
+  if (kind === "integration") {
+    return scope.length >= 3 ? "large" : "medium";
+  }
+  if (dependencies.length > 0 || scope.length >= 4) {
+    return "large";
+  }
+  if (scope.length >= 2 || /\b(migrate|refactor|redesign|restructure|cross-cutting)\b/i.test(objective)) {
+    return "medium";
+  }
+  return "small";
+}
+
+function inferAcceptanceCriteria(objective: string, anchors: RequestAnchors, scope: string[], kind: WorkflowUnit["kind"]): string[] {
+  const criteria: string[] = [];
+
+  if (kind === "integration") {
+    criteria.push("Cross-unit interfaces and shared surfaces still align after all upstream units complete.");
+    criteria.push("The final user-facing result matches the original request rather than only isolated slices.");
+  }
+
+  if (looksLikeFix(objective)) {
+    criteria.push("The reported symptom or failing behavior is no longer reproducible on the scoped surface.");
+  }
+
+  if (looksLikeCreate(objective)) {
+    criteria.push("The requested behavior or artifact exists on the intended surface and stays bounded to this unit.");
+  }
+
+  if (anchors.tests.length > 0) {
+    criteria.push(`Verification can reference ${anchors.tests.join(", ")} without broadening into unrelated surfaces.`);
+  }
+
+  if (scope.length > 0) {
+    criteria.push(`Changes remain bounded to: ${scope.join(", ")}.`);
+  }
+
+  return unique(criteria);
+}
+
+function inferSharedRisks(objective: string, anchors: RequestAnchors, scope: string[], kind: WorkflowUnit["kind"]): string[] {
+  const risks: string[] = [];
+
+  if (kind === "integration") {
+    risks.push("Cross-unit merge drift can hide interface breakage until the final verify pass.");
+  }
+  if (anchors.errors.length > 0) {
+    risks.push("A narrow fix can mask the symptom without proving the underlying failure surface is covered.");
+  }
+  if (anchors.tests.length === 0 && (looksLikeFix(objective) || looksLikeCreate(objective))) {
+    risks.push("Verification surface is implicit, so clarify must lock down what proves the result.");
+  }
+  if (scope.some((item) => /(?:package\.json|tsconfig|vite\.config|eslint|prettier|pnpm-lock|package-lock|yarn\.lock)/i.test(item))) {
+    risks.push("Config or toolchain changes can affect sibling units outside the local scope.");
+  }
+  if (scope.length >= 3) {
+    risks.push("Wide scope increases the chance that a supposedly isolated unit bleeds into neighboring work.");
+  }
+
+  return unique(risks);
+}
+
+function enrichUnit(
+  unit: WorkflowUnit,
+  objective: string,
+  anchors: RequestAnchors,
+  graphStrategy: WorkflowGraphStrategy,
+): WorkflowUnit {
+  const scope = Array.isArray(unit.scope) ? unique(unit.scope) : [];
+  const dependsOn = Array.isArray(unit.dependsOn) ? unit.dependsOn : [];
+  const kind = unit.kind ?? "work";
+
+  return {
+    ...unit,
+    scope,
+    ownership: Array.isArray(unit.ownership) ? unique(unit.ownership) : [],
+    priority: unit.priority ?? inferUnitPriority(objective, anchors, kind),
+    estimatedEffort: unit.estimatedEffort ?? inferUnitEffort(objective, scope, dependsOn, kind),
+    mergeRequired: unit.mergeRequired ?? graphStrategy !== "single",
+    sharedRisks: unit.sharedRisks ?? inferSharedRisks(objective, anchors, scope, kind),
+    acceptanceCriteria: unit.acceptanceCriteria ?? inferAcceptanceCriteria(objective, anchors, scope, kind),
+  };
+}
+
+function buildSingleUnit(
+  route: RouteDecision,
+  objective: string,
+  anchors: RequestAnchors,
+  intents: CapabilityIntent[],
+  notes: string[],
+): WorkflowUnit {
+  const scopedPaths = unique(anchors.filePaths.map(scopeKeyForFilePath));
+  return enrichUnit({
+    id: makeUnitId(1),
+    title: normalizeTitle(objective),
+    kind: "work",
+    request: route.normalizedMessage,
+    scope: unique([...anchors.filePaths, ...anchors.symbols]),
+    dependsOn: [],
+    parallelizable: false,
+    ownership: scopedPaths,
+    anchors,
+    intakeIntents: intents,
+    intakeNotes: notes,
+  }, objective, anchors, "single");
+}
+
+function buildIntegrationUnit(
+  objective: string,
+  index: number,
+  priorUnits: WorkflowUnit[],
+  graphNotes: string[],
+): WorkflowUnit {
+  return enrichUnit({
+    id: makeUnitId(index),
+    title: "Integrate and verify cross-unit result",
+    kind: "integration",
+    request: `Integrate and verify the combined result for: ${objective}`,
+    scope: unique(priorUnits.flatMap((unit) => unit.scope ?? [])),
+    dependsOn: priorUnits.map((unit) => unit.id),
+    parallelizable: false,
+    ownership: unique(priorUnits.flatMap((unit) => unit.ownership ?? [])),
+    intakeNotes: graphNotes,
+    verifyFocus: [
+      "Cross-unit interfaces still align after all ready units complete.",
+      "The final user-facing result matches the original objective, not just each isolated slice.",
+    ],
+  }, objective, {
+    filePaths: unique(priorUnits.flatMap((unit) => unit.anchors?.filePaths ?? [])),
+    symbols: unique(priorUnits.flatMap((unit) => unit.anchors?.symbols ?? [])),
+    errors: unique(priorUnits.flatMap((unit) => unit.anchors?.errors ?? [])),
+    tests: unique(priorUnits.flatMap((unit) => unit.anchors?.tests ?? [])),
+    tickets: unique(priorUnits.flatMap((unit) => unit.anchors?.tickets ?? [])),
+  }, "parallel_fanout");
+}
+
+function carveWorkflowUnits(
+  route: RouteDecision,
+  objective: string,
+  anchors: RequestAnchors,
+  intents: CapabilityIntent[],
+  notes: string[],
+): { proposedUnits: WorkflowUnit[]; graphStrategy: WorkflowGraphStrategy; graphNotes: string[] } {
+  const deliverables = explicitDeliverables(route.normalizedMessage);
+  if (deliverables) {
+    const graphNotes = deliverables.ordered
+      ? ["carved from explicit numbered deliverables; run units in the declared order"]
+      : ["carved from explicit bullet deliverables; root units are parallel-ready and fan into one integration unit"];
+
+    const units: WorkflowUnit[] = deliverables.items.map((item, index) => {
+      const itemAnchors = extractAnchors(item);
+      const scopedPaths = unique(itemAnchors.filePaths.map(scopeKeyForFilePath));
+      const dependsOn = deliverables.ordered && index > 0 ? [makeUnitId(index)] : [];
+      return enrichUnit({
+        id: makeUnitId(index + 1),
+        title: normalizeTitle(item),
+        kind: "work" as const,
+        request: item,
+        scope: unique([...itemAnchors.filePaths, ...itemAnchors.symbols]),
+        dependsOn,
+        parallelizable: !deliverables.ordered,
+        ownership: scopedPaths,
+        anchors: itemAnchors,
+        intakeIntents: intents,
+        intakeNotes: [...notes, ...graphNotes],
+      } satisfies WorkflowUnit, item, itemAnchors, deliverables.ordered ? "serial" : "parallel_fanout");
+    });
+
+    const proposedUnits = !deliverables.ordered
+      ? [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes)]
+      : units;
+
+    return {
+      proposedUnits,
+      graphStrategy: deliverables.ordered ? "serial" : "parallel_fanout",
+      graphNotes,
+    };
+  }
+
+  const groupedScopes = new Map<string, string[]>();
+  for (const filePath of anchors.filePaths) {
+    const scope = scopeKeyForFilePath(filePath);
+    groupedScopes.set(scope, [...(groupedScopes.get(scope) ?? []), filePath]);
+  }
+
+  if (groupedScopes.size >= 2) {
+    const graphNotes = [
+      "carved from disjoint file scopes; root units are parallel-ready when the host can execute them independently",
+      "a final integration unit fans in after the scoped units verify successfully",
+    ];
+    const scopeEntries = [...groupedScopes.entries()];
+    const units: WorkflowUnit[] = scopeEntries.map(([scope, scopedPaths], index) =>
+      enrichUnit(
+        {
+          id: makeUnitId(index + 1),
+          title: normalizeTitle(`${scope}: ${objective}`),
+          kind: "work" as const,
+          request: `${objective}\n\nFocus this unit on ${scope}.`,
+          scope: scopedPaths,
+          dependsOn: [],
+          parallelizable: true,
+          ownership: [scope],
+          anchors: {
+            ...anchors,
+            filePaths: scopedPaths,
+            symbols: anchors.symbols.filter((symbol) => scopedPaths.some((candidate) => candidate.includes(symbol.toLowerCase()))),
+          },
+          intakeIntents: intents,
+          intakeNotes: [...notes, ...graphNotes],
+        },
+        objective,
+        {
+          ...anchors,
+          filePaths: scopedPaths,
+          symbols: [],
+        },
+        "parallel_fanout",
+      ),
+    );
+
+    return {
+      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes)],
+      graphStrategy: "parallel_fanout",
+      graphNotes,
+    };
+  }
+
+  if (anchors.symbols.length >= 2 && anchors.filePaths.length === 0) {
+    const graphNotes = [
+      "carved from multiple explicit symbol targets without concrete file paths",
+      "each root unit should map its symbol to code before execution and fan into one integration pass",
+    ];
+    const units = anchors.symbols.map((symbol, index) =>
+      enrichUnit(
+        {
+          id: makeUnitId(index + 1),
+          title: normalizeTitle(`${symbol}: ${objective}`),
+          kind: "work",
+          request: `${objective}\n\nFocus this unit on the ${symbol} surface.`,
+          scope: [symbol],
+          dependsOn: [],
+          parallelizable: true,
+          ownership: [symbol],
+          anchors: {
+            ...anchors,
+            filePaths: [],
+            symbols: [symbol],
+          },
+          intakeIntents: intents,
+          intakeNotes: [...notes, ...graphNotes],
+        },
+        objective,
+        {
+          ...anchors,
+          filePaths: [],
+          symbols: [symbol],
+        },
+        "parallel_fanout",
+      ),
+    );
+
+    return {
+      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes)],
+      graphStrategy: "parallel_fanout",
+      graphNotes,
+    };
+  }
+
+  return {
+    proposedUnits: [buildSingleUnit(route, objective, anchors, intents, notes)],
+    graphStrategy: "single",
+    graphNotes: ["request stayed as one bounded workflow unit"],
+  };
+}
+
 function hasAcceptanceSignal(message: string): boolean {
   return (
     /\b(should|must|expected|acceptance|done when|success means|result should)\b/i.test(message) ||
@@ -390,10 +734,14 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
   const questions: string[] = [];
 
   if (route.kind !== "work") {
+    const singleUnit = buildSingleUnit(route, objective, anchors, intents, ["request was routed to chat mode"]);
     return {
       objective,
       anchors,
       intents,
+      proposedUnits: [singleUnit],
+      graphStrategy: "single",
+      graphNotes: ["request was routed to chat mode"],
       missingEvidence,
       questions,
       needsUserInput: false,
@@ -467,6 +815,11 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
     missingEvidence.push("acceptance criteria");
   }
 
+  if ((looksLikeFix(objective) || looksLikeCreate(objective)) && anchors.tests.length === 0) {
+    questions.push("What concrete test, reproduction, or verification surface should prove the result is correct?");
+    missingEvidence.push("verification surface");
+  }
+
   if (looksLikeFix(objective) && anchors.errors.length === 0) {
     questions.push("What exact symptom, failing case, or error should be fixed?");
     missingEvidence.push("failure evidence or reproduction target");
@@ -487,10 +840,15 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
     notes.push("do not guess missing requirements; gather evidence from code, research, or user answers first");
   }
 
+  const carved = carveWorkflowUnits(route, objective, anchors, intents, notes);
+
   return {
     objective,
     anchors,
     intents,
+    proposedUnits: carved.proposedUnits,
+    graphStrategy: carved.graphStrategy,
+    graphNotes: carved.graphNotes,
     missingEvidence,
     questions,
     needsUserInput: questions.length > 0,
@@ -695,16 +1053,9 @@ function startFromMessage(input: {
   const { state, signal } = createWorkflow({
     mode: input.mode ?? "work",
     description: intake.objective,
-    units: [
-      {
-        id: "unit-001",
-        title: normalizeTitle(intake.objective),
-        request: route.normalizedMessage,
-        anchors: intake.anchors,
-        intakeIntents: intake.intents,
-        intakeNotes: intake.notes,
-      },
-    ],
+    units: intake.proposedUnits,
+    graphStrategy: intake.graphStrategy,
+    graphNotes: intake.graphNotes,
     captureEnabled: input.captureEnabled ?? false,
     maxVerifyAttempts: input.maxVerifyAttempts ?? 3,
   });
@@ -722,18 +1073,44 @@ function startFromMessage(input: {
 
 function summarizeWorkflowState(state: WorkflowState) {
   const unit = state.units[state.currentUnitIndex];
+  const completed = completedUnitIds(state);
+  const ready = readyUnits(state);
   return {
     workflowId: state.workflowId,
     mode: state.mode,
     description: state.description,
+    graphStrategy: state.graphStrategy ?? "single",
     status: state.status,
     phase: state.phase,
+    workflowTaskIndexRef: workflowTaskIndexPath(state.workflowId),
+    taskRoot: workflowTaskRootPath(state.workflowId),
     currentUnit: unit
       ? {
           id: unit.id,
           title: unit.title,
+          kind: unit.kind ?? "work",
+          dependsOn: unit.dependsOn ?? [],
+          priority: unit.priority ?? "medium",
+          estimatedEffort: unit.estimatedEffort ?? "medium",
+          acceptanceCriteria: unit.acceptanceCriteria ?? [],
+          sharedRisks: unit.sharedRisks ?? [],
+          packetRef: unitBriefPath(state.workflowId, unit.id),
+          statusRef: unitStatusPath(state.workflowId, unit.id),
+          resultRef: unitResultPath(state.workflowId, unit.id),
+          relayRefs: (unit.dependsOn ?? []).map((dependencyId) => unitRelayPath(state.workflowId, dependencyId)),
         }
       : undefined,
+    readyUnits: ready.map((readyUnit) => ({
+      id: readyUnit.id,
+      title: readyUnit.title,
+      kind: readyUnit.kind ?? "work",
+      parallelizable: readyUnit.parallelizable === true,
+      priority: readyUnit.priority ?? "medium",
+      estimatedEffort: readyUnit.estimatedEffort ?? "medium",
+      packetRef: unitBriefPath(state.workflowId, readyUnit.id),
+    })),
+    completedUnitCount: completed.length,
+    totalUnitCount: state.units.length,
     verifyAttempts: state.verifyAttempts,
     maxVerifyAttempts: state.maxVerifyAttempts,
     pendingDecisionCount: state.pendingDecisions.length,
@@ -789,6 +1166,8 @@ function handleStart(args: string[], flags: FlagMap): void {
       entryPolicy: result.entryPolicy,
       phasePolicy: result.phasePolicy,
       statePath: savedPath,
+      workflowTaskIndexRef: workflowTaskIndexPath(result.state.workflowId),
+      taskRoot: workflowTaskRootPath(result.state.workflowId),
       signal: result.signal,
     });
     return;

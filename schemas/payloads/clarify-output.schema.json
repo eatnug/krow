@@ -3,11 +3,19 @@
   "$id": "krow/payloads/clarify-output",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ready", "summary", "assumptions", "decisions"],
+  "required": ["ready", "summary", "assumptions", "evidence", "acceptanceCriteria", "decisions"],
   "properties": {
     "ready": { "type": "boolean" },
     "summary": { "type": "string", "minLength": 1 },
     "assumptions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "acceptanceCriteria": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },

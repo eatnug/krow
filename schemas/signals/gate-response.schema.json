@@ -23,6 +23,8 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "state_ref": { "type": "string", "minLength": 1 },
+    "workflow_task_index_ref": { "type": "string", "minLength": 1 },
+    "task_status_ref": { "type": "string", "minLength": 1 },
     "on_complete": { "type": "object" },
     "instructions": { "type": "string", "minLength": 1 }
   }

@@ -23,7 +23,19 @@ import {
   validateVerifyOutput,
   validateWorkflowState,
 } from "./validators.js";
-import { workflowStatePath } from "./state-store.js";
+import {
+  unitBatonPath,
+  unitBriefPath,
+  unitContextPath,
+  unitRelayPath,
+  unitResultPath,
+  unitStatusPath,
+  workflowRelayRootPath,
+  workflowStatePath,
+  workflowTaskIndexPath,
+  workflowTaskRootPath,
+} from "./state-store.js";
+import { buildRunContext, completedUnitIds, nextReadyUnitIndex, unitDependencies } from "./workflow-graph.js";
 
 type PhasePayload = ClarifyOutput | ExecuteOutput | VerifyOutput | CaptureOutput;
 type SignalResult = { state?: WorkflowState; signal: ControlSignal };
@@ -92,20 +104,53 @@ function toRuntimePhase(phase: string): RuntimePhase | undefined {
 }
 
 function runSignal(state: WorkflowState, phase: RuntimePhase, instructions: string): RunSignal {
+  const context = buildRunContext(state);
+  const unit = currentUnit(state);
+  const currentUnitContext =
+    context.currentUnit && typeof context.currentUnit === "object"
+      ? (context.currentUnit as Record<string, unknown>)
+      : undefined;
+  const readySiblingUnitIds = Array.isArray(context.readySiblingUnitIds)
+    ? context.readySiblingUnitIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const detailLines = [instructions];
+
+  if (typeof context.graphStrategy === "string") {
+    detailLines.push(`Graph strategy: ${context.graphStrategy}.`);
+  }
+  if (currentUnitContext?.title && typeof currentUnitContext.title === "string") {
+    detailLines.push(
+      `Current unit: ${currentUnitContext.title}${typeof currentUnitContext.id === "string" ? ` (${currentUnitContext.id})` : ""}.`,
+    );
+  }
+  if (readySiblingUnitIds.length > 0) {
+    detailLines.push(
+      `Other ready units: ${readySiblingUnitIds.join(", ")}. Use them as scheduling metadata only; this signal still covers one unit.`,
+    );
+  }
+
   return {
     type: "run",
     workflow_id: state.workflowId,
     mode: state.mode,
-    unit_id: currentUnit(state)?.id,
+    unit_id: unit?.id,
     phase,
     prompt_ref: promptForPhase(phase),
     required_schema: schemaForPhase(phase),
     state_ref: workflowStatePath(state.workflowId),
+    workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
+    task_packet_ref: unit ? unitBriefPath(state.workflowId, unit.id) : undefined,
+    task_context_ref: unit ? unitContextPath(state.workflowId, unit.id) : undefined,
+    task_status_ref: unit ? unitStatusPath(state.workflowId, unit.id) : undefined,
+    task_result_ref: unit ? unitResultPath(state.workflowId, unit.id) : undefined,
+    baton_ref: unit ? unitBatonPath(state.workflowId, unit.id) : undefined,
+    relay_refs: unit ? unitDependencies(unit).map((dependencyId) => unitRelayPath(state.workflowId, dependencyId)) : [],
+    context,
     on_complete: {
       kind: "phase_output",
       phase,
     },
-    instructions,
+    instructions: detailLines.join(" "),
   };
 }
 
@@ -135,6 +180,7 @@ function terminalSignal(state: WorkflowState): ControlSignal {
     mode: state.mode,
     status: state.status === "blocked" ? "blocked" : state.status === "stopped" ? "stopped" : "completed",
     state_ref: workflowStatePath(state.workflowId),
+    workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
     outputs: Object.keys(state.outputs),
     message:
       state.status === "blocked"
@@ -169,7 +215,15 @@ function setPhase(state: WorkflowState, status: WorkflowStatus, phase: RuntimePh
 }
 
 function advanceToNextUnit(state: WorkflowState): void {
-  state.currentUnitIndex += 1;
+  const nextIndex = nextReadyUnitIndex(state);
+  if (nextIndex === undefined) {
+    state.status = "blocked";
+    state.blockedReason = "no ready unit remained in the workflow graph";
+    state.updatedAt = nowIso();
+    return;
+  }
+
+  state.currentUnitIndex = nextIndex;
   state.verifyAttempts = 0;
   setPhase(state, "phase_clarify", "clarify");
 }
@@ -185,24 +239,32 @@ export function validateState(state: unknown): FaultSignal | undefined {
 export function createWorkflow(input: CreateWorkflowInput | string): CreatedWorkflow {
   const normalized = normalizeCreateWorkflowInput(input);
   const timestamp = normalized.createdAt ?? nowIso();
+  const initialUnitIndex = normalized.units.findIndex((unit) => (unit.dependsOn?.length ?? 0) === 0);
   const state = {
-    schemaVersion: "1.0.0",
+    schemaVersion: "1.2.0",
     workflowId: normalized.workflowId ?? createWorkflowId(),
     mode: normalized.mode,
     description: normalized.description,
     status: "phase_clarify",
     phase: "clarify",
     units: normalized.units,
-    currentUnitIndex: 0,
+    graphStrategy: normalized.graphStrategy,
+    graphNotes: normalized.graphNotes,
+    currentUnitIndex: initialUnitIndex >= 0 ? initialUnitIndex : 0,
     captureEnabled: normalized.captureEnabled ?? false,
     maxVerifyAttempts: normalized.maxVerifyAttempts ?? 3,
     verifyAttempts: 0,
     pendingDecisions: [],
     decisionHistory: [],
     outputs: {},
+    taskRoot: "",
+    relayRoot: "",
     createdAt: timestamp,
     updatedAt: timestamp,
   } as unknown as WorkflowState;
+
+  state.taskRoot = workflowTaskRootPath(state.workflowId);
+  state.relayRoot = workflowRelayRootPath(state.workflowId);
 
   const stateValidation = validateWorkflowState(state);
   if (!stateValidation.ok) {
@@ -222,7 +284,11 @@ export function nextSignal(state: WorkflowState): ControlSignal {
 
   switch (state.status) {
     case "phase_clarify":
-      return runSignal(state, "clarify", "Tighten the current unit until execution is safe and verification is clear.");
+      return runSignal(
+        state,
+        "clarify",
+        "Tighten the current unit until execution is safe, verification is clear, and blocked sibling units are not pulled into scope.",
+      );
     case "clarify_pending":
       return {
         type: "gate",
@@ -232,12 +298,22 @@ export function nextSignal(state: WorkflowState): ControlSignal {
         unit_id: currentUnit(state)?.id,
         options: state.pendingDecisions.map((decision) => decision.id),
         state_ref: workflowStatePath(state.workflowId),
+        workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
+        task_status_ref: currentUnit(state) ? unitStatusPath(state.workflowId, currentUnit(state)!.id) : undefined,
         instructions: "Collect the pending external decisions, then submit decision answers and resume clarify.",
       };
     case "phase_execute":
-      return runSignal(state, "execute", "Perform only the clarified unit of work and leave evidence for verification.");
+      return runSignal(
+        state,
+        "execute",
+        "Perform only the clarified unit of work. If the graph exposes other ready units, treat them as scheduler metadata for the host rather than silently expanding this unit.",
+      );
     case "phase_verify":
-      return runSignal(state, "verify", "Try to disprove the claimed result and report recoverable issues precisely.");
+      return runSignal(
+        state,
+        "verify",
+        "Try to disprove the claimed result for the current unit and report recoverable issues precisely enough to drive the next clarify pass.",
+      );
     case "phase_capture":
       return runSignal(state, "capture", "Capture only durable, reusable patterns worth saving.");
     case "completed":
@@ -394,8 +470,8 @@ function applyVerify(state: WorkflowState, input: unknown): CombinedResult {
   next.lastVerifyIssues = validation.value.issues;
 
   if (validation.value.passed) {
-    const isLastUnit = next.currentUnitIndex >= next.units.length - 1;
-    if (!isLastUnit) {
+    const allUnitsComplete = completedUnitIds(next).length >= next.units.length;
+    if (!allUnitsComplete) {
       advanceToNextUnit(next);
       return withResponse({ state: next, signal: nextSignal(next) });
     }

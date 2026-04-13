@@ -12,6 +12,8 @@ All workflows persist:
 - `workflowId`
 - `mode`
 - `description`
+- `graphStrategy`
+- `graphNotes`
 - `status`
 - `phase`
 - `units`
@@ -22,6 +24,8 @@ All workflows persist:
 - `pendingDecisions`
 - `decisionHistory`
 - `outputs`
+- `taskRoot`
+- `relayRoot`
 - `createdAt`
 - `updatedAt`
 
@@ -52,7 +56,21 @@ Each unit should carry at least:
 - `id`
 - `title`
 
-Optional fields are runtime-defined. The engine does not interpret them.
+Common optional fields now include:
+
+- `kind`
+- `request`
+- `scope`
+- `dependsOn`
+- `parallelizable`
+- `ownership`
+- `priority`
+- `estimatedEffort`
+- `mergeRequired`
+- `sharedRisks`
+- `acceptanceCriteria`
+
+The runtime uses `dependsOn` to decide when a unit becomes ready. Independent root units may exist in parallel; an integration unit can fan in after they complete.
 
 ## Retry Counters
 
@@ -86,6 +104,28 @@ The runtime may persist:
 - `pendingDecisions` during `clarify_pending`
 - `lastVerifyIssues` after a failed verify
 - `blockedReason` when the workflow cannot continue
+
+## Task Packets
+
+In addition to workflow state, the runtime mirrors each workflow into durable task packet files:
+
+```text
+.krow/tasks/<workflowId>/
+  index.md
+  <unitId>/
+    brief.md
+    context.md
+    status.md
+    result.md
+    baton.md
+    artifacts/
+```
+
+Relay copies for downstream units live under:
+
+```text
+.krow/relays/<workflowId>/<unitId>.md
+```
 
 ## Persistence Location
 

@@ -6,6 +6,8 @@ import type {
   WorkflowState,
   WorkflowUnit,
 } from "./types.js";
+import { workflowTaskIndexPath } from "./state-store.js";
+import { buildRunContext, completedUnitIds } from "./workflow-graph.js";
 
 function currentUnit(state: WorkflowState): WorkflowUnit | undefined {
   return state.units[state.currentUnitIndex];
@@ -41,6 +43,71 @@ function asVerifyOutput(value: unknown): VerifyOutput | undefined {
 
 function formatLines(lines: string[]): string {
   return lines.join("\n");
+}
+
+function graphContextBlock(state: WorkflowState, unit: WorkflowUnit | undefined): string[] {
+  const context = buildRunContext(state);
+  const currentUnit =
+    context.currentUnit && typeof context.currentUnit === "object"
+      ? (context.currentUnit as Record<string, unknown>)
+      : undefined;
+  const readySiblingUnitIds = Array.isArray(context.readySiblingUnitIds)
+    ? context.readySiblingUnitIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const blockedUnitIds = Array.isArray(context.blockedUnitIds)
+    ? context.blockedUnitIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const completed = completedUnitIds(state);
+
+  const lines = ["Graph context:"];
+  lines.push(`- Strategy: ${state.graphStrategy ?? "single"}`);
+  lines.push(`- Completed units: ${completed.length} of ${state.units.length}`);
+  lines.push(`- Workflow task index: ${workflowTaskIndexPath(state.workflowId)}`);
+
+  if (currentUnit?.kind && typeof currentUnit.kind === "string") {
+    lines.push(`- Current unit kind: ${currentUnit.kind}`);
+  }
+
+  if (currentUnit?.packetRef && typeof currentUnit.packetRef === "string") {
+    lines.push(`- Task packet: ${currentUnit.packetRef}`);
+  }
+  if (currentUnit?.statusRef && typeof currentUnit.statusRef === "string") {
+    lines.push(`- Task status: ${currentUnit.statusRef}`);
+  }
+  if (currentUnit?.resultRef && typeof currentUnit.resultRef === "string") {
+    lines.push(`- Task result: ${currentUnit.resultRef}`);
+  }
+
+  if (Array.isArray(unit?.dependsOn) && unit.dependsOn.length > 0) {
+    lines.push(`- Depends on: ${unit.dependsOn.join(", ")}`);
+  }
+
+  if (Array.isArray(unit?.scope) && unit.scope.length > 0) {
+    lines.push(`- Scoped surfaces: ${unit.scope.join(", ")}`);
+  }
+
+  if (Array.isArray(unit?.ownership) && unit.ownership.length > 0) {
+    lines.push(`- Ownership boundary: ${unit.ownership.join(", ")}`);
+  }
+
+  if (Array.isArray(unit?.acceptanceCriteria) && unit.acceptanceCriteria.length > 0) {
+    lines.push(`- Acceptance criteria: ${unit.acceptanceCriteria.join(" | ")}`);
+  }
+
+  if (Array.isArray(unit?.sharedRisks) && unit.sharedRisks.length > 0) {
+    lines.push(`- Shared risks: ${unit.sharedRisks.join(" | ")}`);
+  }
+
+  if (readySiblingUnitIds.length > 0) {
+    lines.push(`- Other ready units: ${readySiblingUnitIds.join(", ")}`);
+  }
+
+  if (blockedUnitIds.length > 0) {
+    lines.push(`- Blocked units: ${blockedUnitIds.join(", ")}`);
+  }
+
+  lines.push("");
+  return lines;
 }
 
 function payloadBlock(title: string, payload: unknown): string[] {
@@ -83,11 +150,16 @@ export function buildClarifyPrompt(state: WorkflowState): string {
     "",
     "Requirements:",
     "- Read the relevant code and gather evidence before making factual claims.",
+    "- List the concrete evidence you actually used: files, symbols, tests, logs, or docs.",
+    "- Turn the user's success condition into explicit acceptance criteria for this unit.",
     "- Surface only the current missing information bundle. If external input is required, ask for all known decisions at once.",
     "- Keep the response scoped to clarify for the current unit.",
+    "- Do not pull blocked or not-yet-ready units into this clarify pass.",
     "- If the unit is ready, make `ready` true and leave `decisions` empty.",
     "",
   ];
+
+  lines.push(...graphContextBlock(state, unit));
 
   if (state.decisionHistory.length > 0) {
     lines.push("Decision history:");
@@ -110,6 +182,8 @@ export function buildClarifyPrompt(state: WorkflowState): string {
     ready: true,
     summary: "Concrete scope, evidence, and execution edge for the current unit.",
     assumptions: ["Explicit assumptions that still shape execution."],
+    evidence: ["src/example.ts::TargetFunction", "tests/example.test.ts"],
+    acceptanceCriteria: ["The changed behavior is observable on the scoped surface.", "The intended verification surface is clear."],
     verifyFocus: ["Evidence that verification should check."],
     decisions: [],
   }));
@@ -133,10 +207,14 @@ export function buildExecutePrompt(state: WorkflowState): string {
     "Requirements:",
     "- Stay inside the current unit boundary.",
     "- Use evidence gathered during clarify rather than re-expanding scope.",
+    "- Treat sibling ready units as scheduler context. This run still owns only the current unit.",
     "- Make concrete code or artifact changes and return one execute payload.",
     "- Report exactly what changed and any checks you ran.",
+    "- Leave downstream workers a usable handoff trail when this unit is part of a larger graph.",
     "",
   ];
+
+  lines.push(...graphContextBlock(state, unit));
 
   if (clarify) {
     lines.push("Clarify summary:");
@@ -157,6 +235,8 @@ export function buildExecutePrompt(state: WorkflowState): string {
     changedFiles: ["relative/path.ts"],
     outputFiles: [],
     artifacts: [],
+    checks: ["npm run typecheck"],
+    handoffNotes: ["Integration unit should re-check shared interfaces after sibling units finish."],
     notes: ["Checks run, constraints, or follow-up notes."],
   }));
 
@@ -180,11 +260,16 @@ export function buildVerifyPrompt(state: WorkflowState): string {
     "",
     "Requirements:",
     "- Read the changed files and run proportionate checks when possible.",
+    "- Report the concrete checks you ran, their status, and what evidence each one produced.",
+    "- Record any claims that still remain unverified instead of implying they passed.",
     "- Report recoverable issues precisely enough to drive the next clarify pass.",
     "- Use `needsHuman` only when the workflow truly requires an external decision.",
+    "- Verify only the current unit and any explicitly declared integration surface.",
     "- Stay inside the verify payload contract for the current unit.",
     "",
   ];
+
+  lines.push(...graphContextBlock(state, unit));
 
   if (clarify?.verifyFocus?.length) {
     lines.push("Verify focus:");
@@ -211,10 +296,15 @@ export function buildVerifyPrompt(state: WorkflowState): string {
   lines.push(...payloadBlock("Return JSON matching the verify schema:", {
     passed: true,
     score: { accuracy: 100, completeness: 100, consistency: 100 },
+    checks: [
+      { name: "Typecheck", status: "passed", command: "npm run typecheck", evidence: "Command exited 0." },
+    ],
+    evidence: ["src/example.ts matches the clarified scope.", "npm run typecheck exited 0."],
     issues: [],
     decisions: [],
     needsHuman: false,
     retryHint: "",
+    unverifiedClaims: [],
     summary: "Verification result with evidence-backed conclusions.",
   }));
 

@@ -41,6 +41,7 @@ If intake is not blocked, run: \`npx krow start --intent work "$ARGUMENTS"\`
 
 ### type = "run"
 - Read \`state_ref\` before acting.
+- Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
 - Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
 - Spawn an Agent for this phase. DO NOT execute the phase yourself.
 - Tool policy by phase:
@@ -48,16 +49,16 @@ If intake is not blocked, run: \`npx krow start --intent work "$ARGUMENTS"\`
   - \`execute\`: Read, Grep, Glob, Edit, Write, Bash, Agent
   - \`verify\`: Read, Grep, Glob, Bash, Agent
   - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
-- In \`clarify\`, gather evidence first and ask the full missing-information bundle only when still required.
-- In \`execute\`, complete the work end to end. If the scope cleanly splits, use bounded subagents step by step or in parallel with explicit file ownership.
-- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification.
+- In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
+- In \`execute\`, complete only the current unit. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
+- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification. Always include concrete checks, evidence, and any unverified claims in the payload.
 - In \`capture\`, write only durable reusable learnings.
 - Wait for the Agent result.
 - Extract the JSON output from the Agent response.
 - Run: \`npx krow submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\`, then run \`npx krow resume <workflow_id>\`.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\`, then run \`npx krow resume <workflow_id>\`.
 - For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
@@ -73,7 +74,7 @@ If intake is not blocked, run: \`npx krow start --intent work "$ARGUMENTS"\`
 - NEVER skip the local control commands. Every transition goes through krow.
 - Always pass JSON as a single-quoted string in commands.
 - Minify JSON before passing to commands (no newlines).
-- State lives under \`.krow/state/workflows/<workflowId>.json\`. Read the referenced state file instead of guessing.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 `;
 
 const CLAUDE_KROW_COMMAND = `---
@@ -113,6 +114,7 @@ If intake is not blocked, run: \`npx krow start --intent work "$request"\`
 
 ### type = "run"
 - Read \`state_ref\` before acting.
+- Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
 - Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
 - Spawn an Agent for this phase. DO NOT execute the phase yourself.
 - Tool policy by phase:
@@ -120,16 +122,16 @@ If intake is not blocked, run: \`npx krow start --intent work "$request"\`
   - \`execute\`: Read, Grep, Glob, Edit, Write, Bash, Agent
   - \`verify\`: Read, Grep, Glob, Bash, Agent
   - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
-- In \`clarify\`, gather evidence first and ask the full missing-information bundle only when still required.
-- In \`execute\`, complete the work end to end. If the scope cleanly splits, use bounded subagents step by step or in parallel with explicit file ownership.
-- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification.
+- In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
+- In \`execute\`, complete only the current unit. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
+- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification. Always include concrete checks, evidence, and any unverified claims in the payload.
 - In \`capture\`, write only durable reusable learnings.
 - Wait for the Agent result.
 - Extract the JSON output from the Agent response.
 - Run: \`npx krow submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\`, then run \`npx krow resume <workflow_id>\`.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\`, then run \`npx krow resume <workflow_id>\`.
 - For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
@@ -145,7 +147,7 @@ If intake is not blocked, run: \`npx krow start --intent work "$request"\`
 - NEVER skip the local control commands. Every transition goes through krow.
 - Always pass JSON as a single-quoted string in commands.
 - Minify JSON before passing to commands (no newlines).
-- State lives under \`.krow/state/workflows/<workflowId>.json\`. Read the referenced state file instead of guessing.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 `;
 
 const GEMINI_KROW_COMMAND = `# ${MANAGED_MARKER}
@@ -178,20 +180,21 @@ If intake is not blocked, run via run_shell_command: \`npx krow start --intent w
 
 ### type = "run"
 - Read \`state_ref\` before acting.
+- Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
 - Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
 - Tool policy by phase:
   - \`clarify\`: use read_file, grep_search, list_directory, and run_shell_command only for read-only inspection
   - \`execute\`: use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command
   - \`verify\`: use read_file, grep_search, list_directory, and run_shell_command; do not silently edit files
   - \`capture\`: use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command only for durable knowledge capture
-- In \`clarify\`, gather evidence first and ask the full missing-information bundle only when still required.
-- In \`execute\`, complete the work end to end. If the work cannot be parallelized in-host, process it step by step without skipping transitions.
-- In \`verify\`, try to disprove the claimed result before accepting it.
+- In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
+- In \`execute\`, complete only the current unit. If the workflow state shows other ready sibling units, use that graph metadata for host scheduling; if the host cannot parallelize them, process the ready units step by step without skipping transitions.
+- In \`verify\`, try to disprove the claimed result before accepting it. Always include concrete checks, evidence, and any unverified claims.
 - When the phase work is complete, collect your result as one JSON object matching \`required_schema\`.
 - Run via run_shell_command: \`npx krow submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\` via run_shell_command, then run \`npx krow resume <workflow_id>\`.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\` via run_shell_command, then run \`npx krow resume <workflow_id>\`.
 - For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
@@ -207,7 +210,7 @@ If intake is not blocked, run via run_shell_command: \`npx krow start --intent w
 - NEVER skip the local control commands. Every transition goes through krow.
 - Always pass JSON as a single-quoted string in commands.
 - Minify JSON before passing to commands (no newlines).
-- State lives under \`.krow/state/workflows/<workflowId>.json\`. Read the referenced state file instead of guessing.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 """
 `;
 

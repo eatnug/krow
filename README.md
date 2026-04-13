@@ -50,8 +50,8 @@ That installs:
 
 The installed wrappers are thin host adapters over the same local control surface:
 - `route`: classify a message as chat or work without creating workflow state
-- `intake`: extract anchors, missing evidence, and bundled clarification questions
-- `start`: create workflow state and emit the first control signal
+- `intake`: extract anchors, missing evidence, bundled clarification questions, and a proposed unit graph
+- `start`: create workflow state, carve ready units when strong split signals exist, and emit the first control signal
 - `status`, `next`, `resume`: inspect or continue persisted workflow state
 - `submit-phase`, `submit-decisions`, `stop`: advance or terminate local workflow state
 
@@ -61,4 +61,10 @@ Runtime signals are explicit:
 - `done`: terminal completed, blocked, or stopped state
 - `fault`: recoverable or unrecoverable runtime problem
 
-The wrappers use `intake --intent work` first so agents gather evidence and bundled questions before a workflow starts. After start, the runtime advances through `clarify -> execute -> verify -> capture` and persists state under `.krow/state/workflows/<workflowId>.json`.
+The wrappers use `intake --intent work` first so agents gather evidence, bundled questions, and a proposed unit graph before a workflow starts. After start, the runtime advances each unit through `clarify -> execute -> verify -> capture`, schedules the next ready unit from the dependency graph, and persists:
+
+- workflow state under `.krow/state/workflows/<workflowId>.json`
+- task packets under `.krow/tasks/<workflowId>/`
+- relay and baton files under `.krow/relays/<workflowId>/`
+
+The current contract is still host-assisted. `krow` does not spawn teammates itself, but it now gives the host richer scheduling metadata, durable task packets, and stricter clarify/verify payload contracts so parallel-capable hosts can behave more predictably.

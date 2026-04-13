@@ -57,6 +57,7 @@ export function runSignalInstructions(
   phase: RuntimePhase,
   schemaRef: string,
   stateRef: string,
+  context?: Record<string, unknown>,
 ): string {
   const lines = [
     `Execute the ${phase} phase for workflow ${workflowId}.`,
@@ -65,12 +66,54 @@ export function runSignalInstructions(
     `When complete, run: ${submitPhaseCommand(workflowId, phase)}`,
   ];
 
+  const graphStrategy = typeof context?.graphStrategy === "string" ? context.graphStrategy : undefined;
+  const currentUnit =
+    context?.currentUnit && typeof context.currentUnit === "object"
+      ? (context.currentUnit as Record<string, unknown>)
+      : undefined;
+  const readySiblingUnitIds = Array.isArray(context?.readySiblingUnitIds)
+    ? context.readySiblingUnitIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const currentUnitRefs =
+    context?.currentUnit && typeof context.currentUnit === "object"
+      ? (context.currentUnit as Record<string, unknown>)
+      : undefined;
+  const dependencyRelayRefs = Array.isArray(context?.dependencyRelayRefs)
+    ? context.dependencyRelayRefs.filter((value): value is string => typeof value === "string")
+    : [];
+
+  if (graphStrategy) {
+    lines.push(`Graph strategy: ${graphStrategy}.`);
+  }
+
+  if (currentUnit?.title && typeof currentUnit.title === "string") {
+    lines.push(`Current unit: ${currentUnit.title}${typeof currentUnit.id === "string" ? ` (${currentUnit.id})` : ""}.`);
+  }
+
+  if (currentUnitRefs?.packetRef && typeof currentUnitRefs.packetRef === "string") {
+    lines.push(`Read the task packet at ${currentUnitRefs.packetRef}.`);
+  }
+
+  if (currentUnitRefs?.statusRef && typeof currentUnitRefs.statusRef === "string") {
+    lines.push(`Update your understanding from ${currentUnitRefs.statusRef} before acting.`);
+  }
+
+  if (dependencyRelayRefs.length > 0) {
+    lines.push(`Read upstream relay files first: ${dependencyRelayRefs.join(", ")}.`);
+  }
+
+  if (readySiblingUnitIds.length > 0) {
+    lines.push(
+      `Other ready units exist: ${readySiblingUnitIds.join(", ")}. This run still covers only the current unit; use the graph metadata for host-level scheduling, not silent scope expansion.`,
+    );
+  }
+
   if (phase === "clarify") {
-    lines.push("If external input is required, return ready=false with the full current decisions array.");
+    lines.push("If external input is required, return ready=false with the full current decisions array, plus evidence and acceptanceCriteria for what is already known.");
   }
 
   if (phase === "verify") {
-    lines.push("If the result needs an external decision, set needsHuman=true and provide bundled decisions.");
+    lines.push("If the result needs an external decision, set needsHuman=true and provide bundled decisions. Always include checks, evidence, and any unverifiedClaims.");
   }
 
   return lines.join("\n");

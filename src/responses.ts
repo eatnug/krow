@@ -15,7 +15,17 @@ import {
   submitDecisionsCommand,
 } from "./instructions.js";
 import { promptRefForPhase, schemaRefForPhase } from "./prompts.js";
-import { workflowStatePath } from "./state-store.js";
+import {
+  unitBatonPath,
+  unitBriefPath,
+  unitContextPath,
+  unitRelayPath,
+  unitResultPath,
+  unitStatusPath,
+  workflowStatePath,
+  workflowTaskIndexPath,
+} from "./state-store.js";
+import { buildRunContext } from "./workflow-graph.js";
 
 function currentUnitId(state: WorkflowState): string | undefined {
   return state.units[state.currentUnitIndex]?.id;
@@ -23,33 +33,47 @@ function currentUnitId(state: WorkflowState): string | undefined {
 
 export function buildRunSignal(state: WorkflowState, phase: RuntimePhase = state.phase): RunSignal {
   const stateRef = workflowStatePath(state.workflowId);
+  const unitId = currentUnitId(state);
   return {
     type: "run",
     workflow_id: state.workflowId,
     mode: state.mode,
-    unit_id: currentUnitId(state),
+    unit_id: unitId,
     phase,
     prompt_ref: promptRefForPhase(phase),
     required_schema: schemaRefForPhase(phase),
     state_ref: stateRef,
+    workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
+    task_packet_ref: unitId ? unitBriefPath(state.workflowId, unitId) : undefined,
+    task_context_ref: unitId ? unitContextPath(state.workflowId, unitId) : undefined,
+    task_status_ref: unitId ? unitStatusPath(state.workflowId, unitId) : undefined,
+    task_result_ref: unitId ? unitResultPath(state.workflowId, unitId) : undefined,
+    baton_ref: unitId ? unitBatonPath(state.workflowId, unitId) : undefined,
+    relay_refs: state.units[state.currentUnitIndex]
+      ? (state.units[state.currentUnitIndex].dependsOn ?? []).map((dependencyId) => unitRelayPath(state.workflowId, dependencyId))
+      : undefined,
+    context: buildRunContext(state),
     on_complete: {
       kind: "phase_output",
       phase,
     },
-    instructions: runSignalInstructions(state.workflowId, phase, schemaRefForPhase(phase), stateRef),
+    instructions: runSignalInstructions(state.workflowId, phase, schemaRefForPhase(phase), stateRef, buildRunContext(state)),
   };
 }
 
 export function buildClarifyGateSignal(state: WorkflowState): GateSignal {
   const stateRef = workflowStatePath(state.workflowId);
+  const unitId = currentUnitId(state);
   return {
     type: "gate",
     gate: "clarify",
     workflow_id: state.workflowId,
     mode: state.mode,
-    unit_id: currentUnitId(state),
+    unit_id: unitId,
     options: state.pendingDecisions.map((decision) => decision.id),
     state_ref: stateRef,
+    workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
+    task_status_ref: unitId ? unitStatusPath(state.workflowId, unitId) : undefined,
     on_complete: {
       kind: "decision_answers",
       command: submitDecisionsCommand(state.workflowId),
@@ -66,6 +90,7 @@ export function buildDoneSignal(state: WorkflowState): DoneSignal {
     mode: state.mode,
     status: state.status === "blocked" ? "blocked" : state.status === "stopped" ? "stopped" : "completed",
     state_ref: stateRef,
+    workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
     outputs: Object.keys(state.outputs),
     message:
       state.status === "blocked"
@@ -107,6 +132,7 @@ export function attachSignalInstructions(signal: ControlSignal): ControlSignal {
           signal.phase,
           signal.required_schema,
           signal.state_ref,
+          signal.context,
         ),
       };
     case "gate":

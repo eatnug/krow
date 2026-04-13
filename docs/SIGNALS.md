@@ -34,7 +34,16 @@ Suggested schema:
   "prompt_ref": "or task packet reference",
   "required_schema": "schemas/payloads/execute-output.schema.json",
   "state_ref": ".krow/state/workflows/wf-123.json",
-  "context": {},
+  "workflow_task_index_ref": ".krow/tasks/wf-123/index.md",
+  "task_packet_ref": ".krow/tasks/wf-123/unit-02/brief.md",
+  "task_status_ref": ".krow/tasks/wf-123/unit-02/status.md",
+  "task_result_ref": ".krow/tasks/wf-123/unit-02/result.md",
+  "relay_refs": [".krow/relays/wf-123/unit-01.md"],
+  "context": {
+    "graphStrategy": "parallel_fanout",
+    "currentUnit": {},
+    "readyUnits": []
+  },
   "on_complete": { "kind": "phase_output", "phase": "execute" },
   "instructions": "human-readable execution guidance"
 }
@@ -108,6 +117,8 @@ capture
 
 The engine does not care what the unit represents. It only cares about the unit id, the current phase, and the validated output for that phase.
 
+When several units are ready at once, the `run.context` payload should expose that ready batch so the host can choose serial or parallel execution. The signal still represents one current unit; siblings are scheduler metadata, not permission to collapse units into one payload. Hosts should read the referenced task packet and upstream relay files before acting.
+
 ## 4. Quiet Recovery
 
 If `verify` fails, the engine should usually transition back to `clarify`.
@@ -166,6 +177,7 @@ The engine should not know how prompts are executed, how approvals are collected
 Control state should bind directly to:
 
 - `.krow/state/*.json`
+- `.krow/state/workflows/*.json`
 - `.krow/plans/*.md`
 - `.krow/tasks/*`
 - `.krow/relays/*.md`
@@ -180,6 +192,8 @@ The minimum runtime should validate:
 - `verify` output
 - optional `capture` output
 - any decision answers returned from a gate
+
+The clarify payload should include evidence and acceptance criteria. The verify payload should include concrete checks, evidence, and any unverified claims.
 
 ## 10. Gate Discipline
 

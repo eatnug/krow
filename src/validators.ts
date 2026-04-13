@@ -11,6 +11,7 @@ import type {
   WorkflowState,
   WorkflowStatus,
 } from "./types.js";
+import { inferGraphStrategy, unitDependencies } from "./workflow-graph.js";
 
 const validStatuses: WorkflowStatus[] = [
   "phase_clarify",
@@ -36,6 +37,139 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isNonEmptyString);
+}
+
+function validateWorkflowUnits(value: unknown): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(value) || value.length === 0) {
+    return ["units must be a non-empty array"];
+  }
+
+  const unitIds: string[] = [];
+
+  value.forEach((unit, index) => {
+    const path = `units[${index}]`;
+    if (!isRecord(unit)) {
+      issues.push(`${path} must be an object`);
+      return;
+    }
+
+    if (!isNonEmptyString(unit.id)) {
+      issues.push(`${path}.id must be a non-empty string`);
+    } else {
+      unitIds.push(unit.id);
+    }
+
+    if (!isNonEmptyString(unit.title)) {
+      issues.push(`${path}.title must be a non-empty string`);
+    }
+
+    if (unit.kind !== undefined && unit.kind !== "work" && unit.kind !== "integration") {
+      issues.push(`${path}.kind must be 'work' or 'integration' when present`);
+    }
+
+    if (unit.request !== undefined && !isNonEmptyString(unit.request)) {
+      issues.push(`${path}.request must be a non-empty string when present`);
+    }
+
+    if (unit.scope !== undefined && !isStringArray(unit.scope)) {
+      issues.push(`${path}.scope must be an array of non-empty strings when present`);
+    }
+
+    if (unit.ownership !== undefined && !isStringArray(unit.ownership)) {
+      issues.push(`${path}.ownership must be an array of non-empty strings when present`);
+    }
+
+    if (unit.priority !== undefined && unit.priority !== "high" && unit.priority !== "medium" && unit.priority !== "low") {
+      issues.push(`${path}.priority must be 'high', 'medium', or 'low' when present`);
+    }
+
+    if (
+      unit.estimatedEffort !== undefined &&
+      unit.estimatedEffort !== "small" &&
+      unit.estimatedEffort !== "medium" &&
+      unit.estimatedEffort !== "large"
+    ) {
+      issues.push(`${path}.estimatedEffort must be 'small', 'medium', or 'large' when present`);
+    }
+
+    if (unit.mergeRequired !== undefined && typeof unit.mergeRequired !== "boolean") {
+      issues.push(`${path}.mergeRequired must be a boolean when present`);
+    }
+
+    if (unit.sharedRisks !== undefined && !isStringArray(unit.sharedRisks)) {
+      issues.push(`${path}.sharedRisks must be an array of non-empty strings when present`);
+    }
+
+    if (unit.acceptanceCriteria !== undefined && !isStringArray(unit.acceptanceCriteria)) {
+      issues.push(`${path}.acceptanceCriteria must be an array of non-empty strings when present`);
+    }
+
+    if (unit.verifyFocus !== undefined && !isStringArray(unit.verifyFocus)) {
+      issues.push(`${path}.verifyFocus must be an array of non-empty strings when present`);
+    }
+
+    if (unit.dependsOn !== undefined && !isStringArray(unit.dependsOn)) {
+      issues.push(`${path}.dependsOn must be an array of non-empty strings when present`);
+    }
+
+    if (unit.parallelizable !== undefined && typeof unit.parallelizable !== "boolean") {
+      issues.push(`${path}.parallelizable must be a boolean when present`);
+    }
+  });
+
+  const duplicates = unitIds.filter((id, index) => unitIds.indexOf(id) !== index);
+  duplicates.forEach((id) => issues.push(`duplicate unit id: ${id}`));
+
+  const uniqueIds = new Set(unitIds);
+  value.forEach((unit, index) => {
+    if (!isRecord(unit) || !isNonEmptyString(unit.id)) {
+      return;
+    }
+
+    const path = `units[${index}]`;
+    const dependencies = unitDependencies(unit as unknown as { dependsOn?: string[] });
+    dependencies.forEach((dependencyId) => {
+      if (!uniqueIds.has(dependencyId)) {
+        issues.push(`${path}.dependsOn references unknown unit: ${dependencyId}`);
+      }
+      if (dependencyId === unit.id) {
+        issues.push(`${path}.dependsOn cannot include the unit itself`);
+      }
+    });
+  });
+
+  if (issues.length > 0) {
+    return issues;
+  }
+
+  const units = value as Array<{ id: string; dependsOn?: string[] }>;
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const unitMap = new Map(units.map((unit) => [unit.id, unit]));
+
+  function visit(unitId: string): void {
+    if (visited.has(unitId) || issues.length > 0) {
+      return;
+    }
+    if (visiting.has(unitId)) {
+      issues.push(`unit dependency cycle detected at ${unitId}`);
+      return;
+    }
+
+    visiting.add(unitId);
+    const unit = unitMap.get(unitId);
+    if (unit) {
+      for (const dependencyId of unitDependencies(unit as unknown as { dependsOn?: string[] })) {
+        visit(dependencyId);
+      }
+    }
+    visiting.delete(unitId);
+    visited.add(unitId);
+  }
+
+  unitIds.forEach(visit);
+  return issues;
 }
 
 function validateDecisionPrompts(value: unknown, path: string): string[] {
@@ -124,6 +258,12 @@ export function validateClarifyOutput(value: unknown): ValidationResult<ClarifyO
   if (!isStringArray(value.assumptions)) {
     issues.push("assumptions must be an array of non-empty strings");
   }
+  if (!isStringArray(value.evidence)) {
+    issues.push("evidence must be an array of non-empty strings");
+  }
+  if (!isStringArray(value.acceptanceCriteria)) {
+    issues.push("acceptanceCriteria must be an array of non-empty strings");
+  }
   if (value.verifyFocus !== undefined && !isStringArray(value.verifyFocus)) {
     issues.push("verifyFocus must be an array of non-empty strings when present");
   }
@@ -176,6 +316,12 @@ export function validateExecuteOutput(value: unknown): ValidationResult<ExecuteO
   if (value.artifacts !== undefined && !isStringArray(value.artifacts)) {
     issues.push("artifacts must be an array of non-empty strings when present");
   }
+  if (value.checks !== undefined && !isStringArray(value.checks)) {
+    issues.push("checks must be an array of non-empty strings when present");
+  }
+  if (value.handoffNotes !== undefined && !isStringArray(value.handoffNotes)) {
+    issues.push("handoffNotes must be an array of non-empty strings when present");
+  }
   if (value.notes !== undefined && !isStringArray(value.notes)) {
     issues.push("notes must be an array of non-empty strings when present");
   }
@@ -202,6 +348,32 @@ export function validateVerifyOutput(value: unknown): ValidationResult<VerifyOut
   if (typeof value.passed !== "boolean") {
     issues.push("passed must be a boolean");
   }
+  if (!Array.isArray(value.checks)) {
+    issues.push("checks must be an array");
+  } else {
+    value.checks.forEach((check, index) => {
+      const path = `checks[${index}]`;
+      if (!isRecord(check)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      if (!isNonEmptyString(check.name)) {
+        issues.push(`${path}.name must be a non-empty string`);
+      }
+      if (check.status !== "passed" && check.status !== "failed" && check.status !== "skipped") {
+        issues.push(`${path}.status must be 'passed', 'failed', or 'skipped'`);
+      }
+      if (check.command !== undefined && !isNonEmptyString(check.command)) {
+        issues.push(`${path}.command must be a non-empty string when present`);
+      }
+      if (!isNonEmptyString(check.evidence)) {
+        issues.push(`${path}.evidence must be a non-empty string`);
+      }
+    });
+  }
+  if (!isStringArray(value.evidence)) {
+    issues.push("evidence must be an array of non-empty strings");
+  }
   issues.push(...validateVerifyIssues(value.issues, "issues"));
   if (!isNonEmptyString(value.summary)) {
     issues.push("summary must be a non-empty string");
@@ -224,6 +396,9 @@ export function validateVerifyOutput(value: unknown): ValidationResult<VerifyOut
   }
   if (value.retryHint !== undefined && !isNonEmptyString(value.retryHint)) {
     issues.push("retryHint must be a non-empty string when present");
+  }
+  if (value.unverifiedClaims !== undefined && !isStringArray(value.unverifiedClaims)) {
+    issues.push("unverifiedClaims must be an array of non-empty strings when present");
   }
   if (value.decisions !== undefined) {
     issues.push(...validateDecisionPrompts(value.decisions, "decisions"));
@@ -280,6 +455,8 @@ export function validateWorkflowState(value: unknown): ValidationResult<Workflow
     "description",
     "status",
     "phase",
+    "taskRoot",
+    "relayRoot",
     "createdAt",
     "updatedAt",
   ] as const;
@@ -290,23 +467,7 @@ export function validateWorkflowState(value: unknown): ValidationResult<Workflow
     }
   });
 
-  if (!Array.isArray(value.units) || value.units.length === 0) {
-    issues.push("units must be a non-empty array");
-  } else {
-    value.units.forEach((unit, index) => {
-      const path = `units[${index}]`;
-      if (!isRecord(unit)) {
-        issues.push(`${path} must be an object`);
-        return;
-      }
-      if (!isNonEmptyString(unit.id)) {
-        issues.push(`${path}.id must be a non-empty string`);
-      }
-      if (!isNonEmptyString(unit.title)) {
-        issues.push(`${path}.title must be a non-empty string`);
-      }
-    });
-  }
+  issues.push(...validateWorkflowUnits(value.units));
 
   if (typeof value.currentUnitIndex !== "number" || value.currentUnitIndex < 0) {
     issues.push("currentUnitIndex must be a non-negative number");
@@ -354,6 +515,19 @@ export function validateWorkflowState(value: unknown): ValidationResult<Workflow
     issues.push("outputs must be an object");
   }
 
+  if (
+    value.graphStrategy !== undefined &&
+    value.graphStrategy !== "single" &&
+    value.graphStrategy !== "serial" &&
+    value.graphStrategy !== "parallel_fanout"
+  ) {
+    issues.push("graphStrategy must be 'single', 'serial', or 'parallel_fanout' when present");
+  }
+
+  if (value.graphNotes !== undefined && !isStringArray(value.graphNotes)) {
+    issues.push("graphNotes must be an array of non-empty strings when present");
+  }
+
   if (value.lastVerifyIssues !== undefined) {
     issues.push(...validateVerifyIssues(value.lastVerifyIssues, "lastVerifyIssues"));
   }
@@ -364,6 +538,13 @@ export function validateWorkflowState(value: unknown): ValidationResult<Workflow
 
   if (!validPhases.includes(value.phase as RuntimePhase)) {
     issues.push("phase must be one of the canonical workflow phases");
+  }
+
+  if (Array.isArray(value.units) && value.graphStrategy === undefined) {
+    const inferredStrategy = inferGraphStrategy(value.units as WorkflowState["units"]);
+    if (inferredStrategy === "parallel_fanout" && Array.isArray(value.units) && value.units.length < 2) {
+      issues.push("parallel_fanout requires multiple workflow units");
+    }
   }
 
   return issues.length === 0

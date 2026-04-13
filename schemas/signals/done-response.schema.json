@@ -10,6 +10,7 @@
     "mode": { "type": "string", "minLength": 1 },
     "status": { "type": "string", "enum": ["completed", "blocked", "stopped"] },
     "state_ref": { "type": "string", "minLength": 1 },
+    "workflow_task_index_ref": { "type": "string", "minLength": 1 },
     "outputs": { "type": "array", "items": { "type": "string" } },
     "message": { "type": "string", "minLength": 1 }
   }

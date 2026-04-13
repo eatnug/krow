@@ -8,6 +8,11 @@ export type RuntimePhase = "clarify" | "execute" | "verify" | "capture";
 
 export type WorkflowPhase = RuntimePhase;
 
+export type WorkflowGraphStrategy = "single" | "serial" | "parallel_fanout";
+export type WorkflowUnitKind = "work" | "integration";
+export type WorkflowPriority = "high" | "medium" | "low";
+export type WorkflowEffort = "small" | "medium" | "large";
+
 export type WorkflowStatus =
   | "phase_clarify"
   | "clarify_pending"
@@ -41,6 +46,8 @@ export interface ClarifyOutput {
   ready: boolean;
   summary: string;
   assumptions: string[];
+  evidence: string[];
+  acceptanceCriteria: string[];
   verifyFocus?: string[];
   decisions: DecisionPrompt[];
 }
@@ -50,6 +57,8 @@ export interface ExecuteOutput {
   changedFiles: string[];
   outputFiles?: string[];
   artifacts?: string[];
+  checks?: string[];
+  handoffNotes?: string[];
   notes: string[];
 }
 
@@ -66,13 +75,23 @@ export interface VerifyScore {
   consistency: number;
 }
 
+export interface VerifyCheck {
+  name: string;
+  status: "passed" | "failed" | "skipped";
+  command?: string;
+  evidence: string;
+}
+
 export interface VerifyOutput {
   passed: boolean;
   score?: VerifyScore;
+  checks: VerifyCheck[];
+  evidence: string[];
   issues: VerifyIssue[];
   decisions?: DecisionPrompt[];
   needsHuman?: boolean;
   retryHint?: string;
+  unverifiedClaims?: string[];
   summary: string;
 }
 
@@ -90,6 +109,21 @@ export interface CaptureOutput {
 export interface WorkflowUnit {
   id: string;
   title: string;
+  kind?: WorkflowUnitKind;
+  request?: string;
+  scope?: string[];
+  dependsOn?: string[];
+  parallelizable?: boolean;
+  ownership?: string[];
+  priority?: WorkflowPriority;
+  estimatedEffort?: WorkflowEffort;
+  mergeRequired?: boolean;
+  sharedRisks?: string[];
+  acceptanceCriteria?: string[];
+  verifyFocus?: string[];
+  anchors?: RequestAnchors;
+  intakeIntents?: CapabilityIntent[];
+  intakeNotes?: string[];
   [key: string]: unknown;
 }
 
@@ -98,6 +132,8 @@ export interface CreateWorkflowInput {
   mode: string;
   description: string;
   units: WorkflowUnit[];
+  graphStrategy?: WorkflowGraphStrategy;
+  graphNotes?: string[];
   captureEnabled?: boolean;
   maxVerifyAttempts?: number;
   createdAt?: string;
@@ -188,6 +224,8 @@ export interface WorkflowState {
   status: WorkflowStatus;
   phase: RuntimePhase;
   units: WorkflowUnit[];
+  graphStrategy?: WorkflowGraphStrategy;
+  graphNotes?: string[];
   currentUnitIndex: number;
   captureEnabled: boolean;
   maxVerifyAttempts: number;
@@ -195,17 +233,12 @@ export interface WorkflowState {
   pendingDecisions: DecisionPrompt[];
   decisionHistory: DecisionAnswer[];
   outputs: WorkflowOutputs;
+  taskRoot: string;
+  relayRoot: string;
   createdAt: string;
   updatedAt: string;
   lastVerifyIssues?: VerifyIssue[];
   blockedReason?: string;
-
-  // Compile-time compatibility only. The canonical runtime does not depend on,
-  // validate, or mutate these legacy fields.
-  clarifyOutput?: ClarifyOutput;
-  planOutput?: PlanOutput;
-  tasks: Task[];
-  activeWork?: ActiveWork;
 }
 
 // ============================================================================
@@ -221,6 +254,13 @@ export interface RunSignal {
   prompt_ref: string;
   required_schema: string;
   state_ref: string;
+  workflow_task_index_ref?: string;
+  task_packet_ref?: string;
+  task_context_ref?: string;
+  task_status_ref?: string;
+  task_result_ref?: string;
+  baton_ref?: string;
+  relay_refs?: string[];
   context?: Record<string, unknown>;
   on_complete: {
     kind: "phase_output";
@@ -237,6 +277,8 @@ export interface GateSignal {
   unit_id?: string;
   options: string[];
   state_ref: string;
+  workflow_task_index_ref?: string;
+  task_status_ref?: string;
   on_complete?: Record<string, unknown>;
   instructions: string;
 }
@@ -247,6 +289,7 @@ export interface DoneSignal {
   mode?: string;
   status: "completed" | "blocked" | "stopped";
   state_ref: string;
+  workflow_task_index_ref?: string;
   outputs?: string[];
   message: string;
 }
@@ -403,6 +446,9 @@ export interface IntakePlan {
   objective: string;
   anchors: RequestAnchors;
   intents: CapabilityIntent[];
+  proposedUnits: WorkflowUnit[];
+  graphStrategy: WorkflowGraphStrategy;
+  graphNotes: string[];
   missingEvidence: string[];
   questions: string[];
   needsUserInput: boolean;

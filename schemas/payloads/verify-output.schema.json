@@ -3,7 +3,7 @@
   "$id": "krow/payloads/verify-output",
   "type": "object",
   "additionalProperties": false,
-  "required": ["passed", "issues", "summary"],
+  "required": ["passed", "checks", "evidence", "issues", "summary"],
   "properties": {
     "passed": { "type": "boolean" },
     "score": {
@@ -15,6 +15,24 @@
         "completeness": { "type": "number", "minimum": 0, "maximum": 100 },
         "consistency": { "type": "number", "minimum": 0, "maximum": 100 }
       }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "evidence"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+          "command": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
     },
     "issues": {
       "type": "array",
@@ -59,6 +77,10 @@
     },
     "needsHuman": { "type": "boolean" },
     "retryHint": { "type": "string" },
+    "unverifiedClaims": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "summary": { "type": "string", "minLength": 1 }
   }
 }
