@@ -19,8 +19,11 @@ The published package name is `krow-cli`. The installed command remains `krow`.
 
 That installs:
 - Codex `$krow`
+- Codex `$work`
 - Claude Code `/krow`
 - Gemini CLI `/krow`
+
+The generated wrappers call a local bootstrap launcher that executes a runtime copy installed under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
 
 ## Core stance
 
