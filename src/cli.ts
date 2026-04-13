@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   applyDecisionAnswers,
   applyPhaseOutput,
@@ -117,6 +119,23 @@ function printUsage(): void {
       "",
     ].join("\n"),
   );
+}
+
+function installerScriptPath(): string {
+  const cliFile = fileURLToPath(import.meta.url);
+  return path.resolve(path.dirname(cliFile), "../install/krow.mjs");
+}
+
+function delegateInstaller(command: "init" | "remove", args: string[]): never {
+  const result = spawnSync(process.execPath, [installerScriptPath(), command, ...args], {
+    stdio: "inherit",
+  });
+
+  if (typeof result.status === "number") {
+    process.exit(result.status);
+  }
+
+  process.exit(1);
 }
 
 function parseFlags(args: string[]): { positionals: string[]; flags: FlagMap } {
@@ -874,6 +893,12 @@ function main(): void {
   const { positionals, flags } = parseFlags(rest);
 
   switch (command) {
+    case "init":
+      delegateInstaller("init", rest);
+      return;
+    case "remove":
+      delegateInstaller("remove", rest);
+      return;
     case "route":
       handleRoute(positionals, flags);
       return;
