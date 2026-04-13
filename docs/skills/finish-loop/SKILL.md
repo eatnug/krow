@@ -23,7 +23,7 @@ Do not stop at "I made a change." Stop only at verified completion or a concrete
 
 ## State
 
-Maintain `.orchestrator/state/completion.json` with:
+Maintain `.krow/state/completion.json` with:
 
 - active
 - current iteration

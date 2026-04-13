@@ -65,7 +65,7 @@ If the request is still broad or ambiguous, plan first.
 
 Planning is complete only when one of the following is true:
 
-- `.orchestrator/plans/prd-*.md` and `.orchestrator/plans/test-spec-*.md` exist
+- `.krow/plans/prd-*.md` and `.krow/plans/test-spec-*.md` exist
 - the current task packet is concrete enough for `clarify` to proceed without guesswork
 - the user explicitly bypasses planning
 
@@ -85,10 +85,10 @@ When context grows noisy, compress it into files and continue with fresh workers
 
 ## Filesystem Contract
 
-Use a durable workspace such as `.orchestrator/`:
+Use a durable workspace such as `.krow/`:
 
 ```text
-.orchestrator/
+.krow/
   index.md
   state/
   plans/
@@ -102,7 +102,7 @@ Use a durable workspace such as `.orchestrator/`:
 Minimum task packet:
 
 ```text
-.orchestrator/tasks/task-001/
+.krow/tasks/task-001/
   brief.md
   context.md
   status.md
@@ -181,7 +181,7 @@ Specialists such as `test-engineer`, `security-reviewer`, `code-reviewer`, `desi
 
 ## Learning Rules
 
-Write durable learnings to `.orchestrator/knowledge/` only when they are:
+Write durable learnings to `.krow/knowledge/` only when they are:
 
 - hard-won
 - non-obvious
@@ -200,4 +200,4 @@ Completion requires all of the following:
 - signal state moved to a terminal state
 - a concise final report with outputs, evidence, and remaining risks
 
-For the full system design, role catalog, state model, and signal model, see `HARNESS.md`.
+For the full system design, role catalog, state model, and signal model, see `docs/HARNESS.md`.

@@ -23,9 +23,9 @@ Convert one messy task into a small set of sharp task packets that can be execut
 
 Create or update:
 
-- `.orchestrator/index.md`
-- `.orchestrator/tasks/<task-id>/brief.md`
-- `.orchestrator/tasks/<task-id>/context.md`
+- `.krow/index.md`
+- `.krow/tasks/<task-id>/brief.md`
+- `.krow/tasks/<task-id>/context.md`
 
 ## Task Packet Template
 

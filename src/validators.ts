@@ -1,184 +1,386 @@
 import type {
+  CaptureOutput,
   ClarifyOutput,
-  PlanOutput,
-  ExecuteOutput,
-  VerifyOutput,
-  WorkItem,
   DecisionAnswer,
-  WorkflowState,
+  DecisionPrompt,
+  ExecuteOutput,
+  RuntimePhase,
   ValidationResult,
+  VerifyOutput,
+  VerifyIssue,
+  WorkflowState,
+  WorkflowStatus,
 } from "./types.js";
 
-// ============================================================================
-// Helpers
-// ============================================================================
+const validStatuses: WorkflowStatus[] = [
+  "phase_clarify",
+  "clarify_pending",
+  "phase_execute",
+  "phase_verify",
+  "phase_capture",
+  "completed",
+  "blocked",
+  "stopped",
+];
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+const validPhases: RuntimePhase[] = ["clarify", "execute", "verify", "capture"];
+const validScoreKeys = ["accuracy", "completeness", "consistency"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isString(v: unknown): v is string {
-  return typeof v === "string";
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
-function isArray(v: unknown): v is unknown[] {
-  return Array.isArray(v);
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isNonEmptyString);
 }
 
-function fail<T>(issues: string[]): ValidationResult<T> {
-  return { ok: false, issues };
-}
-
-function pass<T>(value: T): ValidationResult<T> {
-  return { ok: true, issues: [], value };
-}
-
-// ============================================================================
-// Work Items Validator
-// ============================================================================
-
-export function validateWorkItems(input: unknown): ValidationResult<WorkItem[]> {
-  if (!isArray(input)) return fail(["work items must be an array"]);
-  if (input.length === 0) return fail(["work items must not be empty"]);
-
+function validateDecisionPrompts(value: unknown, path: string): string[] {
   const issues: string[] = [];
-  for (let i = 0; i < input.length; i++) {
-    const item = input[i];
-    if (!isObject(item)) { issues.push(`items[${i}] must be an object`); continue; }
-    if (!isString(item.id)) issues.push(`items[${i}].id must be a string`);
-    if (!isString(item.role)) issues.push(`items[${i}].role must be a string`);
-    if (!isString(item.task)) issues.push(`items[${i}].task must be a string`);
+  if (!Array.isArray(value)) {
+    return [`${path} must be an array`];
   }
 
-  if (issues.length > 0) return fail(issues);
-  return pass(input as unknown as WorkItem[]);
-}
-
-/** Check if work items are all completed inline (have results) */
-export function allItemsHaveResults(items: WorkItem[]): boolean {
-  return items.every((item) => item.result !== undefined);
-}
-
-// ============================================================================
-// Phase Output Validators (for final/synthesized outputs)
-// ============================================================================
-
-export function validateClarifyOutput(input: unknown): ValidationResult<ClarifyOutput> {
-  const issues: string[] = [];
-  if (!isObject(input)) return fail(["clarify output must be an object"]);
-
-  if (typeof input.ready !== "boolean") issues.push("ready must be a boolean");
-  if (!isString(input.summary) || input.summary.length === 0) issues.push("summary must be a non-empty string");
-  if (!isArray(input.assumptions)) issues.push("assumptions must be an array");
-  if (!isArray(input.decisions)) issues.push("decisions must be an array");
-
-  if (!input.ready && isArray(input.decisions) && input.decisions.length === 0) {
-    issues.push("ready=false requires at least one decision");
-  }
-
-  if (isArray(input.decisions)) {
-    for (let i = 0; i < input.decisions.length; i++) {
-      const d = input.decisions[i];
-      if (!isObject(d)) { issues.push(`decisions[${i}] must be an object`); continue; }
-      if (!isString(d.id)) issues.push(`decisions[${i}].id must be a string`);
-      if (!isString(d.question)) issues.push(`decisions[${i}].question must be a string`);
-      if (!isArray(d.options) || d.options.length === 0) issues.push(`decisions[${i}].options must be a non-empty array`);
+  value.forEach((item, index) => {
+    const itemPath = `${path}[${index}]`;
+    if (!isRecord(item)) {
+      issues.push(`${itemPath} must be an object`);
+      return;
     }
-  }
-
-  if (issues.length > 0) return fail(issues);
-  return pass(input as unknown as ClarifyOutput);
-}
-
-export function validatePlanOutput(input: unknown): ValidationResult<PlanOutput> {
-  const issues: string[] = [];
-  if (!isObject(input)) return fail(["plan output must be an object"]);
-
-  if (!isArray(input.tasks) || input.tasks.length === 0) {
-    issues.push("tasks must be a non-empty array");
-  } else {
-    for (let i = 0; i < input.tasks.length; i++) {
-      const t = input.tasks[i];
-      if (!isObject(t)) { issues.push(`tasks[${i}] must be an object`); continue; }
-      if (!isString(t.id)) issues.push(`tasks[${i}].id must be a string`);
-      if (!isString(t.title)) issues.push(`tasks[${i}].title must be a string`);
-      if (!isArray(t.scope) && !isString(t.scope)) issues.push(`tasks[${i}].scope must be an array or string`);
+    if (!isNonEmptyString(item.id)) {
+      issues.push(`${itemPath}.id must be a non-empty string`);
     }
-  }
-
-  if (!isString(input.approach) || input.approach.length === 0) issues.push("approach must be a non-empty string");
-  if (!isArray(input.risks)) issues.push("risks must be an array");
-
-  if (issues.length > 0) return fail(issues);
-  return pass(input as unknown as PlanOutput);
-}
-
-export function validateExecuteOutput(input: unknown): ValidationResult<ExecuteOutput> {
-  const issues: string[] = [];
-  if (!isObject(input)) return fail(["execute output must be an object"]);
-
-  if (!isString(input.summary) || input.summary.length === 0) issues.push("summary must be a non-empty string");
-  if (!isArray(input.changedFiles)) issues.push("changedFiles must be an array");
-  if (!isArray(input.notes)) issues.push("notes must be an array");
-
-  if (issues.length > 0) return fail(issues);
-  return pass(input as unknown as ExecuteOutput);
-}
-
-export function validateVerifyOutput(input: unknown): ValidationResult<VerifyOutput> {
-  const issues: string[] = [];
-  if (!isObject(input)) return fail(["verify output must be an object"]);
-
-  if (typeof input.passed !== "boolean") issues.push("passed must be a boolean");
-  if (!isArray(input.issues)) issues.push("issues must be an array");
-  if (!isString(input.summary) || input.summary.length === 0) issues.push("summary must be a non-empty string");
-
-  if (isArray(input.issues)) {
-    for (let i = 0; i < input.issues.length; i++) {
-      const issue = input.issues[i];
-      if (!isObject(issue)) { issues.push(`issues[${i}] must be an object`); continue; }
-      if (!isString(issue.severity) || !["error", "warning"].includes(issue.severity as string)) {
-        issues.push(`issues[${i}].severity must be "error" or "warning"`);
+    if (!isNonEmptyString(item.question)) {
+      issues.push(`${itemPath}.question must be a non-empty string`);
+    }
+    if (!Array.isArray(item.options) || item.options.length === 0) {
+      issues.push(`${itemPath}.options must be a non-empty array`);
+      return;
+    }
+    item.options.forEach((option, optionIndex) => {
+      const optionPath = `${itemPath}.options[${optionIndex}]`;
+      if (!isRecord(option)) {
+        issues.push(`${optionPath} must be an object`);
+        return;
       }
-      if (!isString(issue.description)) issues.push(`issues[${i}].description must be a string`);
+      if (!isNonEmptyString(option.id)) {
+        issues.push(`${optionPath}.id must be a non-empty string`);
+      }
+      if (!isNonEmptyString(option.label)) {
+        issues.push(`${optionPath}.label must be a non-empty string`);
+      }
+      if (option.description !== undefined && !isNonEmptyString(option.description)) {
+        issues.push(`${optionPath}.description must be a non-empty string when present`);
+      }
+    });
+  });
+
+  return issues;
+}
+
+function validateVerifyIssues(value: unknown, path: string): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(value)) {
+    return [`${path} must be an array`];
+  }
+
+  value.forEach((issue, index) => {
+    const issuePath = `${path}[${index}]`;
+    if (!isRecord(issue)) {
+      issues.push(`${issuePath} must be an object`);
+      return;
+    }
+    if (issue.severity !== "error" && issue.severity !== "warning") {
+      issues.push(`${issuePath}.severity must be 'error' or 'warning'`);
+    }
+    if (!isNonEmptyString(issue.category)) {
+      issues.push(`${issuePath}.category must be a non-empty string`);
+    }
+    if (!isNonEmptyString(issue.description)) {
+      issues.push(`${issuePath}.description must be a non-empty string`);
+    }
+    if (issue.suggestion !== undefined && !isNonEmptyString(issue.suggestion)) {
+      issues.push(`${issuePath}.suggestion must be a non-empty string when present`);
+    }
+  });
+
+  return issues;
+}
+
+export function validateClarifyOutput(value: unknown): ValidationResult<ClarifyOutput> {
+  const issues: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, issues: ["clarify output must be an object"] };
+  }
+  if (typeof value.ready !== "boolean") {
+    issues.push("ready must be a boolean");
+  }
+  if (!isNonEmptyString(value.summary)) {
+    issues.push("summary must be a non-empty string");
+  }
+  if (!isStringArray(value.assumptions)) {
+    issues.push("assumptions must be an array of non-empty strings");
+  }
+  if (value.verifyFocus !== undefined && !isStringArray(value.verifyFocus)) {
+    issues.push("verifyFocus must be an array of non-empty strings when present");
+  }
+  issues.push(...validateDecisionPrompts(value.decisions, "decisions"));
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as unknown as ClarifyOutput }
+    : { ok: false, issues };
+}
+
+export function validateDecisionAnswers(value: unknown): ValidationResult<DecisionAnswer[]> {
+  const issues: string[] = [];
+  if (!Array.isArray(value)) {
+    return { ok: false, issues: ["decision answers must be an array"] };
+  }
+  value.forEach((item, index) => {
+    const path = `decisionAnswers[${index}]`;
+    if (!isRecord(item)) {
+      issues.push(`${path} must be an object`);
+      return;
+    }
+    if (!isNonEmptyString(item.decisionId)) {
+      issues.push(`${path}.decisionId must be a non-empty string`);
+    }
+    if (!isNonEmptyString(item.selectedOptionId)) {
+      issues.push(`${path}.selectedOptionId must be a non-empty string`);
+    }
+    if (item.customInput !== undefined && !isNonEmptyString(item.customInput)) {
+      issues.push(`${path}.customInput must be a non-empty string when present`);
+    }
+  });
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as DecisionAnswer[] }
+    : { ok: false, issues };
+}
+
+export function validateExecuteOutput(value: unknown): ValidationResult<ExecuteOutput> {
+  const issues: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, issues: ["execute output must be an object"] };
+  }
+  if (!isNonEmptyString(value.summary)) {
+    issues.push("summary must be a non-empty string");
+  }
+  if (value.changedFiles !== undefined && !isStringArray(value.changedFiles)) {
+    issues.push("changedFiles must be an array of non-empty strings when present");
+  }
+  if (value.outputFiles !== undefined && !isStringArray(value.outputFiles)) {
+    issues.push("outputFiles must be an array of non-empty strings when present");
+  }
+  if (value.artifacts !== undefined && !isStringArray(value.artifacts)) {
+    issues.push("artifacts must be an array of non-empty strings when present");
+  }
+  if (value.notes !== undefined && !isStringArray(value.notes)) {
+    issues.push("notes must be an array of non-empty strings when present");
+  }
+
+  const hasPayload =
+    (Array.isArray(value.changedFiles) && value.changedFiles.length > 0) ||
+    (Array.isArray(value.outputFiles) && value.outputFiles.length > 0) ||
+    (Array.isArray(value.artifacts) && value.artifacts.length > 0);
+
+  if (!hasPayload) {
+    issues.push("execute output must include changedFiles, outputFiles, or artifacts");
+  }
+
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as unknown as ExecuteOutput }
+    : { ok: false, issues };
+}
+
+export function validateVerifyOutput(value: unknown): ValidationResult<VerifyOutput> {
+  const issues: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, issues: ["verify output must be an object"] };
+  }
+  if (typeof value.passed !== "boolean") {
+    issues.push("passed must be a boolean");
+  }
+  issues.push(...validateVerifyIssues(value.issues, "issues"));
+  if (!isNonEmptyString(value.summary)) {
+    issues.push("summary must be a non-empty string");
+  }
+  if (value.score !== undefined) {
+    if (!isRecord(value.score)) {
+      issues.push("score must be an object when present");
+    } else {
+      validScoreKeys.forEach((key) => {
+        const scoreMap = value.score as Record<string, unknown>;
+        const score = scoreMap[key];
+        if (typeof score !== "number" || score < 0 || score > 100) {
+          issues.push(`score.${key} must be a number between 0 and 100`);
+        }
+      });
     }
   }
-
-  if (issues.length > 0) return fail(issues);
-  return pass(input as unknown as VerifyOutput);
-}
-
-export function validateDecisionAnswers(input: unknown): ValidationResult<DecisionAnswer[]> {
-  if (!isArray(input)) return fail(["decision answers must be an array"]);
-
-  const issues: string[] = [];
-  for (let i = 0; i < input.length; i++) {
-    const a = input[i];
-    if (!isObject(a)) { issues.push(`answers[${i}] must be an object`); continue; }
-    if (!isString(a.decisionId)) issues.push(`answers[${i}].decisionId must be a string`);
-    if (!isString(a.selectedOptionId)) issues.push(`answers[${i}].selectedOptionId must be a string`);
+  if (value.needsHuman !== undefined && typeof value.needsHuman !== "boolean") {
+    issues.push("needsHuman must be a boolean when present");
+  }
+  if (value.retryHint !== undefined && !isNonEmptyString(value.retryHint)) {
+    issues.push("retryHint must be a non-empty string when present");
+  }
+  if (value.decisions !== undefined) {
+    issues.push(...validateDecisionPrompts(value.decisions, "decisions"));
   }
 
-  if (issues.length > 0) return fail(issues);
-  return pass(input as unknown as DecisionAnswer[]);
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as unknown as VerifyOutput }
+    : { ok: false, issues };
 }
 
-export function validateWorkflowState(state: unknown): ValidationResult<WorkflowState> {
+export function validateCaptureOutput(value: unknown): ValidationResult<CaptureOutput> {
   const issues: string[] = [];
-  if (!isObject(state)) return fail(["state must be an object"]);
+  if (!isRecord(value)) {
+    return { ok: false, issues: ["capture output must be an object"] };
+  }
+  if (!Array.isArray(value.entries)) {
+    issues.push("entries must be an array");
+  } else {
+    value.entries.forEach((entry, index) => {
+      const path = `entries[${index}]`;
+      if (!isRecord(entry)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      if (!isNonEmptyString(entry.filename)) {
+        issues.push(`${path}.filename must be a non-empty string`);
+      }
+      if (!isNonEmptyString(entry.content)) {
+        issues.push(`${path}.content must be a non-empty string`);
+      }
+      if (!isNonEmptyString(entry.reason)) {
+        issues.push(`${path}.reason must be a non-empty string`);
+      }
+      if (entry.action !== undefined && entry.action !== "create" && entry.action !== "update") {
+        issues.push(`${path}.action must be 'create' or 'update' when present`);
+      }
+    });
+  }
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as unknown as CaptureOutput }
+    : { ok: false, issues };
+}
 
-  if (!isString(state.schemaVersion)) issues.push("schemaVersion required");
-  if (!isString(state.workflowId)) issues.push("workflowId required");
-  if (!isString(state.description)) issues.push("description required");
-  if (!isString(state.status)) issues.push("status required");
-  if (!isString(state.phase)) issues.push("phase required");
-  if (!isArray(state.pendingDecisions)) issues.push("pendingDecisions must be an array");
-  if (!isArray(state.decisionHistory)) issues.push("decisionHistory must be an array");
-  if (!isArray(state.tasks)) issues.push("tasks must be an array");
-  if (typeof state.escalateAfter !== "number") issues.push("escalateAfter must be a number");
-  if (!isString(state.createdAt)) issues.push("createdAt required");
-  if (!isString(state.updatedAt)) issues.push("updatedAt required");
+export function validateWorkflowState(value: unknown): ValidationResult<WorkflowState> {
+  const issues: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, issues: ["workflow state must be an object"] };
+  }
 
-  if (issues.length > 0) return fail(issues);
-  return pass(state as unknown as WorkflowState);
+  const stringFields = [
+    "schemaVersion",
+    "workflowId",
+    "mode",
+    "description",
+    "status",
+    "phase",
+    "createdAt",
+    "updatedAt",
+  ] as const;
+
+  stringFields.forEach((field) => {
+    if (!isNonEmptyString(value[field])) {
+      issues.push(`${field} must be a non-empty string`);
+    }
+  });
+
+  if (!Array.isArray(value.units) || value.units.length === 0) {
+    issues.push("units must be a non-empty array");
+  } else {
+    value.units.forEach((unit, index) => {
+      const path = `units[${index}]`;
+      if (!isRecord(unit)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      if (!isNonEmptyString(unit.id)) {
+        issues.push(`${path}.id must be a non-empty string`);
+      }
+      if (!isNonEmptyString(unit.title)) {
+        issues.push(`${path}.title must be a non-empty string`);
+      }
+    });
+  }
+
+  if (typeof value.currentUnitIndex !== "number" || value.currentUnitIndex < 0) {
+    issues.push("currentUnitIndex must be a non-negative number");
+  } else if (Array.isArray(value.units) && value.currentUnitIndex >= value.units.length) {
+    issues.push("currentUnitIndex must point to an existing unit");
+  }
+
+  if (typeof value.captureEnabled !== "boolean") {
+    issues.push("captureEnabled must be a boolean");
+  }
+  if (typeof value.maxVerifyAttempts !== "number" || value.maxVerifyAttempts < 1) {
+    issues.push("maxVerifyAttempts must be a positive number");
+  }
+  if (typeof value.verifyAttempts !== "number" || value.verifyAttempts < 0) {
+    issues.push("verifyAttempts must be a non-negative number");
+  }
+  if (!Array.isArray(value.pendingDecisions)) {
+    issues.push("pendingDecisions must be an array");
+  } else {
+    issues.push(...validateDecisionPrompts(value.pendingDecisions, "pendingDecisions"));
+  }
+
+  if (!Array.isArray(value.decisionHistory)) {
+    issues.push("decisionHistory must be an array");
+  } else {
+    value.decisionHistory.forEach((item, index) => {
+      const path = `decisionHistory[${index}]`;
+      if (!isRecord(item)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      if (!isNonEmptyString(item.decisionId)) {
+        issues.push(`${path}.decisionId must be a non-empty string`);
+      }
+      if (!isNonEmptyString(item.selectedOptionId)) {
+        issues.push(`${path}.selectedOptionId must be a non-empty string`);
+      }
+      if (item.customInput !== undefined && !isNonEmptyString(item.customInput)) {
+        issues.push(`${path}.customInput must be a non-empty string when present`);
+      }
+    });
+  }
+
+  if (!isRecord(value.outputs)) {
+    issues.push("outputs must be an object");
+  }
+
+  if (value.lastVerifyIssues !== undefined) {
+    issues.push(...validateVerifyIssues(value.lastVerifyIssues, "lastVerifyIssues"));
+  }
+
+  if (!validStatuses.includes(value.status as WorkflowStatus)) {
+    issues.push("status must be one of the canonical workflow statuses");
+  }
+
+  if (!validPhases.includes(value.phase as RuntimePhase)) {
+    issues.push("phase must be one of the canonical workflow phases");
+  }
+
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as unknown as WorkflowState }
+    : { ok: false, issues };
+}
+
+export function validateDecisionPromptArray(value: unknown): ValidationResult<DecisionPrompt[]> {
+  const issues = validateDecisionPrompts(value, "decisions");
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as DecisionPrompt[] }
+    : { ok: false, issues };
+}
+
+export function validateVerifyIssueArray(value: unknown): ValidationResult<VerifyIssue[]> {
+  const issues = validateVerifyIssues(value, "issues");
+  return issues.length === 0
+    ? { ok: true, issues: [], value: value as VerifyIssue[] }
+    : { ok: false, issues };
 }

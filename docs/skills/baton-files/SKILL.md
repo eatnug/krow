@@ -13,7 +13,7 @@ Leave behind a relay file that is small, factual, and immediately usable by the 
 
 ## Required Files
 
-Within `.orchestrator/tasks/<task-id>/` maintain:
+Within `.krow/tasks/<task-id>/` maintain:
 
 - `status.md`
 - `result.md`

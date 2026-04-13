@@ -1,120 +1,120 @@
-import type { Phase } from "./types.js";
+import type { RuntimePhase } from "./types.js";
 
-// ============================================================================
-// CLI command prefix
-// ============================================================================
-
-let _prefix: string | undefined;
+let cachedPrefix: string | undefined;
 
 export function cliPrefix(): string {
-  if (_prefix) return _prefix;
+  if (cachedPrefix) {
+    return cachedPrefix;
+  }
+
   const arg1 = process.argv[1] ?? "";
   if (arg1.includes("cli.ts") || arg1.includes("cli.js")) {
-    _prefix = `node ${arg1}`;
+    cachedPrefix = `node ${arg1}`;
   } else {
-    _prefix = "krow";
+    cachedPrefix = "krow";
   }
-  return _prefix;
+  return cachedPrefix;
 }
 
-// ============================================================================
-// Command builders
-// ============================================================================
-
-export function submitWorkItemsCommand(workflowId: string, phase: Phase, taskId?: string): string {
-  const taskArg = taskId ? ` --task ${taskId}` : "";
-  return `${cliPrefix()} submit ${workflowId} ${phase}${taskArg} '<JSON>'`;
+export function routeCommand(): string {
+  return `${cliPrefix()} route '<message>' [--intent <work|chat>] [--allow-heuristics]`;
 }
 
-export function submitWorkItemResultCommand(workflowId: string, itemId: string): string {
-  return `${cliPrefix()} submit-item ${workflowId} ${itemId} '<RESULT>'`;
+export function intakeCommand(): string {
+  return `${cliPrefix()} intake '<message>' [--intent <work|chat>] [--allow-heuristics]`;
 }
 
-export function submitSynthesizedCommand(workflowId: string): string {
-  return `${cliPrefix()} submit-synthesized ${workflowId} '<JSON>'`;
+export function startCommand(): string {
+  return `${cliPrefix()} start '<message>' [--intent <work|chat>] [--allow-heuristics] [--capture] [--mode <name>]`;
 }
 
-export function decideCommand(workflowId: string): string {
-  return `${cliPrefix()} decide ${workflowId} '<JSON>'`;
+export function statusCommand(workflowId: string): string {
+  return `${cliPrefix()} status ${workflowId}`;
 }
 
-export function approvePlanCommand(workflowId: string): string {
-  return `${cliPrefix()} approve-plan ${workflowId}`;
+export function nextCommand(workflowId: string): string {
+  return `${cliPrefix()} next ${workflowId}`;
 }
 
-export function adjustPlanCommand(workflowId: string): string {
-  return `${cliPrefix()} adjust-plan ${workflowId} '<feedback>'`;
+export function resumeCommand(workflowId: string): string {
+  return `${cliPrefix()} resume ${workflowId}`;
 }
 
-export function resolveVerifyCommand(workflowId: string, taskId: string, action: "continue" | "stop"): string {
-  return `${cliPrefix()} resolve-verify ${workflowId} ${taskId} ${action}`;
+export function stopCommand(workflowId: string, reason = "<reason>"): string {
+  return `${cliPrefix()} stop ${workflowId} '${reason}'`;
 }
 
-// ============================================================================
-// Instruction strings
-// ============================================================================
+export function submitPhaseCommand(workflowId: string, phase: RuntimePhase): string {
+  return `${cliPrefix()} submit-phase ${workflowId} ${phase} '<JSON>'`;
+}
 
-export function phaseInstructions(phase: Phase, onComplete: string): string {
+export function submitDecisionsCommand(workflowId: string): string {
+  return `${cliPrefix()} submit-decisions ${workflowId} '<JSON>'`;
+}
+
+export function runSignalInstructions(
+  workflowId: string,
+  phase: RuntimePhase,
+  schemaRef: string,
+  stateRef: string,
+): string {
+  const lines = [
+    `Execute the ${phase} phase for workflow ${workflowId}.`,
+    `Read the current workflow state from ${stateRef} before responding.`,
+    `Return only a single JSON object matching ${schemaRef}.`,
+    `When complete, run: ${submitPhaseCommand(workflowId, phase)}`,
+  ];
+
+  if (phase === "clarify") {
+    lines.push("If external input is required, return ready=false with the full current decisions array.");
+  }
+
+  if (phase === "verify") {
+    lines.push("If the result needs an external decision, set needsHuman=true and provide bundled decisions.");
+  }
+
+  return lines.join("\n");
+}
+
+export function clarifyGateInstructions(workflowId: string, stateRef: string): string {
   return [
-    `Execute the prompt for the "${phase}" phase.`,
-    ``,
-    `CRITICAL OUTPUT REQUIREMENT: Your response MUST be a JSON array of work items. No prose, no markdown outside JSON, no explanation.`,
-    `Schema: [{ "id": string, "role": string, "task": string, "result"?: object }]`,
-    ``,
-    `Simple case (you do it yourself) — return 1 item with result:`,
-    `[{ "id": "main", "role": "main", "task": "did everything", "result": { ... } }]`,
-    ``,
-    `Complex case (needs parallel agents) — return multiple items WITHOUT result:`,
-    `[{ "id": "s1", "role": "analyst", "task": "..." }, { "id": "s2", "role": "reviewer", "task": "..." }]`,
-    ``,
-    `Then run: ${onComplete}`,
+    `Workflow ${workflowId} is waiting for bundled clarification decisions.`,
+    `Read the current decision set from ${stateRef}.`,
+    `Collect all requested decisions from the user, then run: ${submitDecisionsCommand(workflowId)}`,
+    `After submitting the answers, resume the workflow with: ${resumeCommand(workflowId)}`,
   ].join("\n");
 }
 
-export function gateClarifyInstructions(onComplete: string): string {
+export function doneInstructions(workflowId: string, stateRef: string): string {
   return [
-    `Present each decision to the user and collect their answers.`,
-    `Then run: ${onComplete}`,
-    `Replace '<JSON>' with an array of { decisionId, selectedOptionId, customInput? }.`,
+    `Workflow ${workflowId} is terminal.`,
+    `Read ${stateRef} if you need the persisted outputs before reporting completion.`,
+    "Report the final result and any remaining blockers or risks to the user.",
   ].join("\n");
 }
 
-export function gatePlanInstructions(approveCmd: string, adjustCmd: string): string {
-  return [
-    `Present the plan to the user for review.`,
-    `If approved, run: ${approveCmd}`,
-    `If adjustments needed, run: ${adjustCmd}`,
-  ].join("\n");
-}
+export function faultInstructions(
+  workflowId: string | undefined,
+  recoverable: boolean,
+  stateRef?: string,
+): string {
+  const lines = [];
 
-export function gateVerifyInstructions(taskTitle: string, attempts: number, continueCmd: string, stopCmd: string): string {
-  return [
-    `Task "${taskTitle}" has failed verification ${attempts} time(s).`,
-    `Present the issues to the user.`,
-    `Keep trying: ${continueCmd}`,
-    `Stop this task: ${stopCmd}`,
-  ].join("\n");
-}
+  if (workflowId) {
+    lines.push(`Workflow ${workflowId} hit a fault.`);
+  } else {
+    lines.push("The runtime hit a fault before a workflow could be identified.");
+  }
 
-export function batchInstructions(count: number): string {
-  return [
-    `${count} items to execute in parallel.`,
-    `Execute each independently. Submit each result separately using its onComplete command.`,
-  ].join("\n");
-}
+  if (stateRef) {
+    lines.push(`Read ${stateRef} before deciding how to proceed.`);
+  }
 
-export function synthesizeInstructions(phase: Phase, onComplete: string): string {
-  return [
-    `All work items completed. Synthesize the results into a single ${phase} output.`,
-    `Then run: ${onComplete}`,
-  ].join("\n");
-}
+  if (recoverable && workflowId) {
+    lines.push(`Fix the input or state issue, then continue with: ${nextCommand(workflowId)}`);
+  } else {
+    lines.push("Report the fault to the user instead of guessing past it.");
+  }
 
-export function doneInstructions(): string {
-  return "The workflow has reached a terminal state. Report the result to the user.";
-}
-
-export function faultInstructions(recoverable: boolean): string {
-  if (recoverable) return "A recoverable error occurred. Review the issues and retry.";
-  return "An unrecoverable error occurred. Report the error to the user.";
+  return lines.join("\n");
 }

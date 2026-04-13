@@ -21,9 +21,9 @@ If verification fails and the path is still recoverable, loop back into `clarify
 
 Maintain:
 
-- `.orchestrator/state/workflows/<workflow-id>.json`
-- `.orchestrator/relays/*.md`
-- `.orchestrator/tasks/<task-id>/...`
+- `.krow/state/workflows/<workflow-id>.json`
+- `.krow/relays/*.md`
+- `.krow/tasks/<task-id>/...`
 
 ## Rules
 

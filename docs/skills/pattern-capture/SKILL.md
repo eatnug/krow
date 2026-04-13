@@ -13,7 +13,7 @@ Capture reusable knowledge without saving noise.
 
 ## Save To
 
-Write into `.orchestrator/knowledge/` using these prefixes:
+Write into `.krow/knowledge/` using these prefixes:
 
 - `pref--` for stable preferences
 - `rule--` for mandatory rules

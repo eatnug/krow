@@ -33,7 +33,7 @@ Suggested schema:
   "phase": "execute",
   "prompt_ref": "or task packet reference",
   "required_schema": "schemas/payloads/execute-output.schema.json",
-  "state_ref": ".orchestrator/state/workflows/wf-123.json",
+  "state_ref": ".krow/state/workflows/wf-123.json",
   "context": {},
   "on_complete": { "kind": "phase_output", "phase": "execute" },
   "instructions": "human-readable execution guidance"
@@ -53,7 +53,7 @@ Suggested schema:
   "workflow_id": "wf-123",
   "unit_id": "unit-02",
   "options": ["approve", "revise", "stop"],
-  "state_ref": ".orchestrator/state/workflows/wf-123.json",
+  "state_ref": ".krow/state/workflows/wf-123.json",
   "on_complete": {},
   "instructions": "what to present and how to continue"
 }
@@ -70,7 +70,7 @@ Suggested schema:
   "type": "done",
   "workflow_id": "wf-123",
   "status": "completed",
-  "state_ref": ".orchestrator/state/workflows/wf-123.json",
+  "state_ref": ".krow/state/workflows/wf-123.json",
   "outputs": ["path1", "path2"],
   "message": "workflow completed"
 }
@@ -165,11 +165,11 @@ The engine should not know how prompts are executed, how approvals are collected
 
 Control state should bind directly to:
 
-- `.orchestrator/state/*.json`
-- `.orchestrator/plans/*.md`
-- `.orchestrator/tasks/*`
-- `.orchestrator/relays/*.md`
-- `.orchestrator/knowledge/*.md`
+- `.krow/state/*.json`
+- `.krow/plans/*.md`
+- `.krow/tasks/*`
+- `.krow/relays/*.md`
+- `.krow/knowledge/*.md`
 
 ## 9. Payload Shapes
 

@@ -127,7 +127,7 @@ The filesystem is the durable cross-worker memory surface.
 Recommended layout:
 
 ```text
-.orchestrator/
+.krow/
   index.md
   state/
     session.json

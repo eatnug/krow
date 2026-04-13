@@ -92,5 +92,5 @@ The runtime may persist:
 The reference runtime writes workflow files to:
 
 ```text
-.orchestrator/state/workflows/<workflowId>.json
+.krow/state/workflows/<workflowId>.json
 ```

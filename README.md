@@ -34,12 +34,12 @@ That installs:
 ## Layout
 
 - `AGENTS.md`: always-loaded execution contract
-- `HARNESS.md`: full system blueprint
-- `FOUNDATIONS.md`: philosophy and design lineage
-- `skills/`: reusable workflow surfaces
+- `docs/`: non-runtime design docs and repo-local workflow skills
+- `docs/HARNESS.md`: full system blueprint
+- `docs/FOUNDATIONS.md`: philosophy and design lineage
+- `docs/skills/`: reusable workflow surfaces
 - `prompts/`: narrow role prompts
 - `schemas/`: payload, signal, and state schemas
-- `reference-runtime/`: strict state-machine reference implementation
 - `install/`: host wrapper installer
 
 ## Usage
@@ -48,4 +48,17 @@ That installs:
 - In Claude Code, invoke `/krow ...`
 - In Gemini CLI, invoke `/krow ...`
 
-The host wrapper is only an entry mechanism. The core system still operates on explicit work intent, evidence-backed clarification, and `clarify -> execute -> verify`.
+The installed wrappers are thin host adapters over the same local control surface:
+- `route`: classify a message as chat or work without creating workflow state
+- `intake`: extract anchors, missing evidence, and bundled clarification questions
+- `start`: create workflow state and emit the first control signal
+- `status`, `next`, `resume`: inspect or continue persisted workflow state
+- `submit-phase`, `submit-decisions`, `stop`: advance or terminate local workflow state
+
+Runtime signals are explicit:
+- `run`: execute one bounded phase for one workflow unit
+- `gate`: stop for bundled external input only
+- `done`: terminal completed, blocked, or stopped state
+- `fault`: recoverable or unrecoverable runtime problem
+
+The wrappers use `intake --intent work` first so agents gather evidence and bundled questions before a workflow starts. After start, the runtime advances through `clarify -> execute -> verify -> capture` and persists state under `.krow/state/workflows/<workflowId>.json`.

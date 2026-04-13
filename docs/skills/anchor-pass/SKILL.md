@@ -26,8 +26,8 @@ Run this sequence:
 
 Do not begin heavy implementation until these exist:
 
-- `.orchestrator/plans/prd-<slug>.md`
-- `.orchestrator/plans/test-spec-<slug>.md`
+- `.krow/plans/prd-<slug>.md`
+- `.krow/plans/test-spec-<slug>.md`
 - a task index or task graph for execution
 
 Unless the user explicitly bypasses the gate, missing artifacts mean planning is not complete.

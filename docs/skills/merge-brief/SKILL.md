@@ -15,9 +15,9 @@ Turn multiple task outputs into one coherent understanding and one clean next st
 
 Read only the relevant task outputs:
 
-- `.orchestrator/index.md`
-- `.orchestrator/tasks/<task-id>/result.md`
-- `.orchestrator/tasks/<task-id>/status.md`
+- `.krow/index.md`
+- `.krow/tasks/<task-id>/result.md`
+- `.krow/tasks/<task-id>/status.md`
 - any referenced artifacts
 
 ## Rules
@@ -38,7 +38,7 @@ Read only the relevant task outputs:
 
 Update:
 
-- `.orchestrator/index.md`
+- `.krow/index.md`
 - the next task's `brief.md`
 - the next task's `context.md`
 

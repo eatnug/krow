@@ -20,51 +20,60 @@ Treat the current user message as explicit work intent.
 
 ## Startup
 
-Run: \`npx krow start "$ARGUMENTS"\`
+Run: \`npx krow intake --intent work "$ARGUMENTS"\`
 
 If $ARGUMENTS is empty, ask the user what they want to do first.
+
+Parse the JSON response.
+
+If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
+- Ask the user for the full bundled question set in one message.
+- When the user answers, fold the original request plus their answers into one refined request.
+- Run: \`npx krow start --intent work "<refined request>"\`
+
+If intake is not blocked, run: \`npx krow start --intent work "$ARGUMENTS"\`
 
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. Check the \`type\` field and act accordingly:
+2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
+3. Otherwise, check the \`type\` field and act accordingly:
 
-### type = "phase"
-- Spawn an Agent for this phase. DO NOT execute the prompt yourself — always delegate to a subagent.
-- Agent prompt: the \`prompt\` field.
-- Agent tools based on \`capability\`:
-  - "read": Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *)
-  - "write": Read, Grep, Glob, Edit, Write, Bash
-  - "full": all tools
-- Wait for the agent to return its result.
-- Extract the JSON output from the agent's response.
-- Run the command in \`onComplete\`, replacing \`'<JSON>'\` with the minified JSON (single-quoted).
-
-### type = "batch"
-- Spawn ALL agents in parallel (send multiple Agent tool calls in a single message).
-- Each entry in \`responses\` is a phase response — spawn one agent per entry.
-- Apply the same capability-based tool restrictions to each agent.
-- As each agent completes, run its \`onComplete\` command with the JSON result.
+### type = "run"
+- Read \`state_ref\` before acting.
+- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Spawn an Agent for this phase. DO NOT execute the phase yourself.
+- Tool policy by phase:
+  - \`clarify\`: Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *), Bash(rg *), Agent
+  - \`execute\`: Read, Grep, Glob, Edit, Write, Bash, Agent
+  - \`verify\`: Read, Grep, Glob, Bash, Agent
+  - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
+- In \`clarify\`, gather evidence first and ask the full missing-information bundle only when still required.
+- In \`execute\`, complete the work end to end. If the scope cleanly splits, use bounded subagents step by step or in parallel with explicit file ownership.
+- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification.
+- In \`capture\`, write only durable reusable learnings.
+- Wait for the Agent result.
+- Extract the JSON output from the Agent response.
+- Run: \`npx krow submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
 
 ### type = "gate"
-- If \`gate\` = "clarify": Present each decision in \`decisions\` to the user. Collect their answers. Run \`onComplete\` with the answers JSON.
-- If \`gate\` = "plan": Present \`tasks\`, \`approach\`, and \`risks\` to the user. If they approve, run the approve command in \`onComplete\`. If they want changes, run the adjust command mentioned in \`instructions\`.
-- If \`gate\` = "verify": A task has failed verification multiple times. Present \`lastIssues\` and \`verifyAttempts\` to the user. Follow the \`instructions\` field — it contains the continue and stop commands.
+- If \`gate\` = "clarify": read \`state_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\`, then run \`npx krow resume <workflow_id>\`.
+- For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
 - Report the \`message\` to the user. Stop.
 
 ### type = "fault"
-- If \`recoverable\` = true, review the \`issues\` and retry.
+- If \`recoverable\` = true, review \`error\` and \`issues\`, fix the input or state problem, then continue with \`npx krow next <workflow_id>\` when a workflow id is present.
 - If \`recoverable\` = false, report the \`error\` to the user and stop.
 
 ## Rules
 
-- NEVER execute phase prompts yourself. ALWAYS spawn an Agent.
-- NEVER skip the orchestrator commands. Every phase transition goes through krow.
+- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- NEVER skip the local control commands. Every transition goes through krow.
 - Always pass JSON as a single-quoted string in commands.
 - Minify JSON before passing to commands (no newlines).
-- For batch responses, spawn all agents in a SINGLE message to maximize parallelism.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Read the referenced state file instead of guessing.
 `;
 
 const CLAUDE_KROW_COMMAND = `---
@@ -85,49 +94,58 @@ Treat \`$request\` as explicit work intent.
 
 If no request was supplied, ask the user what they want to do first.
 
-Otherwise, run: \`npx krow start "$request"\`
+Otherwise, run: \`npx krow intake --intent work "$request"\`
+
+Parse the JSON response.
+
+If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
+- Ask the user for the full bundled question set in one message.
+- When the user answers, fold the original request plus their answers into one refined request.
+- Run: \`npx krow start --intent work "<refined request>"\`
+
+If intake is not blocked, run: \`npx krow start --intent work "$request"\`
 
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. Check the \`type\` field and act accordingly:
+2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
+3. Otherwise, check the \`type\` field and act accordingly:
 
-### type = "phase"
-- Spawn an Agent for this phase. DO NOT execute the prompt yourself — always delegate to a subagent.
-- Agent prompt: the \`prompt\` field.
-- Agent tools based on \`capability\`:
-  - "read": Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *)
-  - "write": Read, Grep, Glob, Edit, Write, Bash
-  - "full": all tools
-- Wait for the agent to return its result.
-- Extract the JSON output from the agent's response.
-- Run the command in \`onComplete\`, replacing \`'<JSON>'\` with the minified JSON (single-quoted).
-
-### type = "batch"
-- Spawn ALL agents in parallel (send multiple Agent tool calls in a single message).
-- Each entry in \`responses\` is a phase response — spawn one agent per entry.
-- Apply the same capability-based tool restrictions to each agent.
-- As each agent completes, run its \`onComplete\` command with the JSON result.
+### type = "run"
+- Read \`state_ref\` before acting.
+- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Spawn an Agent for this phase. DO NOT execute the phase yourself.
+- Tool policy by phase:
+  - \`clarify\`: Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *), Bash(rg *), Agent
+  - \`execute\`: Read, Grep, Glob, Edit, Write, Bash, Agent
+  - \`verify\`: Read, Grep, Glob, Bash, Agent
+  - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
+- In \`clarify\`, gather evidence first and ask the full missing-information bundle only when still required.
+- In \`execute\`, complete the work end to end. If the scope cleanly splits, use bounded subagents step by step or in parallel with explicit file ownership.
+- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification.
+- In \`capture\`, write only durable reusable learnings.
+- Wait for the Agent result.
+- Extract the JSON output from the Agent response.
+- Run: \`npx krow submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
 
 ### type = "gate"
-- If \`gate\` = "clarify": Present each decision in \`decisions\` to the user. Collect their answers. Run \`onComplete\` with the answers JSON.
-- If \`gate\` = "plan": Present \`tasks\`, \`approach\`, and \`risks\` to the user. If they approve, run the approve command in \`onComplete\`. If they want changes, run the adjust command mentioned in \`instructions\`.
-- If \`gate\` = "verify": A task has failed verification multiple times. Present \`lastIssues\` and \`verifyAttempts\` to the user. Follow the \`instructions\` field — it contains the continue and stop commands.
+- If \`gate\` = "clarify": read \`state_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\`, then run \`npx krow resume <workflow_id>\`.
+- For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
 - Report the \`message\` to the user. Stop.
 
 ### type = "fault"
-- If \`recoverable\` = true, review the \`issues\` and retry.
+- If \`recoverable\` = true, review \`error\` and \`issues\`, fix the input or state problem, then continue with \`npx krow next <workflow_id>\` when a workflow id is present.
 - If \`recoverable\` = false, report the \`error\` to the user and stop.
 
 ## Rules
 
-- NEVER execute phase prompts yourself. ALWAYS spawn an Agent.
-- NEVER skip the orchestrator commands. Every phase transition goes through krow.
+- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- NEVER skip the local control commands. Every transition goes through krow.
 - Always pass JSON as a single-quoted string in commands.
 - Minify JSON before passing to commands (no newlines).
-- For batch responses, spawn all agents in a SINGLE message to maximize parallelism.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Read the referenced state file instead of guessing.
 `;
 
 const GEMINI_KROW_COMMAND = `# ${MANAGED_MARKER}
@@ -141,46 +159,55 @@ Treat {{args}} as explicit work intent.
 
 If no arguments were supplied, ask the user what they want to do first.
 
-Otherwise, run via run_shell_command: \`npx krow start "{{args}}"\`
+Otherwise, run via run_shell_command: \`npx krow intake --intent work "{{args}}"\`
+
+Parse the JSON response.
+
+If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
+- Ask the user for the full bundled question set in one message.
+- When the user answers, fold the original request plus their answers into one refined request.
+- Run via run_shell_command: \`npx krow start --intent work "<refined request>"\`
+
+If intake is not blocked, run via run_shell_command: \`npx krow start --intent work "{{args}}"\`
 
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. Check the \`type\` field and act accordingly:
+2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
+3. Otherwise, check the \`type\` field and act accordingly:
 
-### type = "phase"
-- Execute the phase yourself, but restrict the tools you use based on the \`capability\` field:
-  - "read": only use read_file, grep_search, list_directory, and run_shell_command (limited to git and ls commands only)
-  - "write": use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command
-  - "full": use all available tools without restriction
-- Follow the instructions in the \`prompt\` field.
-- When the phase work is complete, collect your result as JSON.
-- Run the command in \`onComplete\` via run_shell_command, replacing \`'<JSON>'\` with the minified JSON result (single-quoted).
-
-### type = "batch"
-- Process ALL entries in \`responses\` — each is a phase response.
-- For each entry, apply the same capability-based tool restrictions described above.
-- Execute each phase following its \`prompt\` field.
-- As each phase completes, run its \`onComplete\` command via run_shell_command with the minified JSON result.
+### type = "run"
+- Read \`state_ref\` before acting.
+- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Tool policy by phase:
+  - \`clarify\`: use read_file, grep_search, list_directory, and run_shell_command only for read-only inspection
+  - \`execute\`: use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command
+  - \`verify\`: use read_file, grep_search, list_directory, and run_shell_command; do not silently edit files
+  - \`capture\`: use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command only for durable knowledge capture
+- In \`clarify\`, gather evidence first and ask the full missing-information bundle only when still required.
+- In \`execute\`, complete the work end to end. If the work cannot be parallelized in-host, process it step by step without skipping transitions.
+- In \`verify\`, try to disprove the claimed result before accepting it.
+- When the phase work is complete, collect your result as one JSON object matching \`required_schema\`.
+- Run via run_shell_command: \`npx krow submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
 
 ### type = "gate"
-- If \`gate\` = "clarify": Present each decision in \`decisions\` to the user. Collect their answers. Run \`onComplete\` via run_shell_command with the answers JSON.
-- If \`gate\` = "plan": Present \`tasks\`, \`approach\`, and \`risks\` to the user. If they approve, run the approve command in \`onComplete\` via run_shell_command. If they want changes, run the adjust command mentioned in \`instructions\`.
-- If \`gate\` = "verify": A task has failed verification multiple times. Present \`lastIssues\` and \`verifyAttempts\` to the user. Follow the \`instructions\` field — it contains the continue and stop commands.
+- If \`gate\` = "clarify": read \`state_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`npx krow submit-decisions <workflow_id> '<JSON>'\` via run_shell_command, then run \`npx krow resume <workflow_id>\`.
+- For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
 - Report the \`message\` to the user. Stop.
 
 ### type = "fault"
-- If \`recoverable\` = true, review the \`issues\` and retry.
+- If \`recoverable\` = true, review \`error\` and \`issues\`, fix the input or state problem, then continue with \`npx krow next <workflow_id>\` via run_shell_command when a workflow id is present.
 - If \`recoverable\` = false, report the \`error\` to the user and stop.
 
 ## Rules
 
-- NEVER skip the orchestrator commands. Every phase transition goes through krow.
+- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- NEVER skip the local control commands. Every transition goes through krow.
 - Always pass JSON as a single-quoted string in commands.
 - Minify JSON before passing to commands (no newlines).
-- Respect capability-based tool restrictions strictly — do not use disallowed tools for a phase.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Read the referenced state file instead of guessing.
 """
 `;
 

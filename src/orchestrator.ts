@@ -1,470 +1,457 @@
 import type {
+  CaptureOutput,
+  ClarifyOutput,
+  ControlSignal,
+  CreateWorkflowInput,
+  ExecuteOutput,
+  FaultSignal,
   Phase,
+  ProtocolResponse,
+  RunSignal,
+  RuntimePhase,
+  VerifyOutput,
   WorkflowState,
   WorkflowStatus,
+  WorkflowUnit,
   WorkItem,
-  WorkItemState,
-  Task,
-  ProtocolResponse,
 } from "./types.js";
 import {
-  validateWorkItems,
-  allItemsHaveResults,
+  validateCaptureOutput,
   validateClarifyOutput,
-  validatePlanOutput,
+  validateDecisionAnswers,
   validateExecuteOutput,
   validateVerifyOutput,
-  validateDecisionAnswers,
   validateWorkflowState,
 } from "./validators.js";
-import { buildPhaseResponse, buildBatchResponse, buildWorkItemBatchResponse, buildSynthesizeResponse, buildGateResponse, buildDoneResponse, buildFaultResponse } from "./responses.js";
+import { workflowStatePath } from "./state-store.js";
 
-// ============================================================================
-// Helpers
-// ============================================================================
+type PhasePayload = ClarifyOutput | ExecuteOutput | VerifyOutput | CaptureOutput;
+type SignalResult = { state?: WorkflowState; signal: ControlSignal };
+type CompatResult = { state?: WorkflowState; response: ProtocolResponse };
+type CombinedResult = SignalResult & CompatResult;
+type CreatedWorkflow = { state: WorkflowState; signal: ControlSignal; response: ProtocolResponse };
 
-function clone<T>(value: T): T {
+function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function now(): string {
+function nowIso(): string {
   return new Date().toISOString();
 }
 
-function makeId(): string {
+function createWorkflowId(): string {
   return `wf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function setPhase(state: WorkflowState, status: WorkflowStatus, phase: Phase): void {
-  state.status = status;
-  state.phase = phase;
-  state.updatedAt = now();
+function currentUnit(state: WorkflowState): WorkflowUnit | undefined {
+  return state.units[state.currentUnitIndex];
 }
 
-function findTask(state: WorkflowState, taskId: string): Task | undefined {
-  return state.tasks.find((t) => t.id === taskId);
+function currentUnitOutputBucket(state: WorkflowState): Record<string, unknown> {
+  const unit = currentUnit(state);
+  if (!unit) {
+    return {};
+  }
+  if (!state.outputs[unit.id]) {
+    state.outputs[unit.id] = {};
+  }
+  return state.outputs[unit.id] as Record<string, unknown>;
 }
 
-function readyTasks(state: WorkflowState): Task[] {
-  const doneIds = new Set(state.tasks.filter((t) => t.status === "done").map((t) => t.id));
-  return state.tasks.filter(
-    (t) => t.status === "pending" && t.dependsOn.every((dep) => doneIds.has(dep)),
-  );
+function storePhaseOutput(state: WorkflowState, phase: RuntimePhase, payload: PhasePayload): void {
+  currentUnitOutputBucket(state)[phase] = payload;
 }
 
-function allTasksDone(state: WorkflowState): boolean {
-  return state.tasks.length > 0 && state.tasks.every((t) => t.status === "done");
+function schemaForPhase(phase: RuntimePhase): string {
+  return `schemas/payloads/${phase}-output.schema.json`;
 }
 
-type Result = { state: WorkflowState; response: ProtocolResponse };
-type MaybeResult = { state?: WorkflowState; response: ProtocolResponse };
+function promptForPhase(phase: RuntimePhase): string {
+  switch (phase) {
+    case "clarify":
+      return "prompts/clarify.md";
+    case "execute":
+      return "prompts/executor.md";
+    case "verify":
+      return "prompts/verifier.md";
+    case "capture":
+      return "prompts/capture.md";
+  }
+}
 
-// ============================================================================
-// Public API
-// ============================================================================
+function toRuntimePhase(phase: string): RuntimePhase | undefined {
+  switch (phase) {
+    case "clarify":
+    case "execute":
+    case "verify":
+    case "capture":
+      return phase;
+    default:
+      return undefined;
+  }
+}
 
-export function createWorkflow(description: string): Result {
-  const timestamp = now();
-  const state: WorkflowState = {
-    schemaVersion: "1.0.0",
-    workflowId: makeId(),
-    description,
-    status: "phase_clarify",
-    phase: "clarify",
-    pendingDecisions: [],
-    decisionHistory: [],
-    tasks: [],
-    escalateAfter: 3,
-    createdAt: timestamp,
-    updatedAt: timestamp,
+function runSignal(state: WorkflowState, phase: RuntimePhase, instructions: string): RunSignal {
+  return {
+    type: "run",
+    workflow_id: state.workflowId,
+    mode: state.mode,
+    unit_id: currentUnit(state)?.id,
+    phase,
+    prompt_ref: promptForPhase(phase),
+    required_schema: schemaForPhase(phase),
+    state_ref: workflowStatePath(state.workflowId),
+    on_complete: {
+      kind: "phase_output",
+      phase,
+    },
+    instructions,
   };
+}
 
-  const v = validateWorkflowState(state);
-  if (!v.ok) {
-    return { state, response: buildFaultResponse(state, "invalid initial state", v.issues, false) };
+function faultSignal(
+  state: WorkflowState | undefined,
+  error: string,
+  issues: string[],
+  recoverable: boolean,
+): FaultSignal {
+  return {
+    type: "fault",
+    workflow_id: state?.workflowId,
+    mode: state?.mode,
+    unit_id: state ? currentUnit(state)?.id : undefined,
+    phase: state ? toRuntimePhase(state.phase) : undefined,
+    expected_schema: state && toRuntimePhase(state.phase) ? schemaForPhase(toRuntimePhase(state.phase)!) : undefined,
+    issues,
+    error,
+    recoverable,
+  };
+}
+
+function terminalSignal(state: WorkflowState): ControlSignal {
+  return {
+    type: "done",
+    workflow_id: state.workflowId,
+    mode: state.mode,
+    status: state.status === "blocked" ? "blocked" : state.status === "stopped" ? "stopped" : "completed",
+    state_ref: workflowStatePath(state.workflowId),
+    outputs: Object.keys(state.outputs),
+    message:
+      state.status === "blocked"
+        ? state.blockedReason || "workflow blocked"
+        : state.status === "stopped"
+          ? "workflow stopped"
+          : "workflow completed",
+  };
+}
+
+function withResponse(result: SignalResult): CombinedResult {
+  return { ...result, response: result.signal };
+}
+
+function normalizeCreateWorkflowInput(input: CreateWorkflowInput | string): CreateWorkflowInput {
+  if (typeof input !== "string") {
+    return input;
   }
 
-  return { state, response: nextResponse(state) };
+  const title = input.trim() || "main";
+  return {
+    mode: "work",
+    description: input,
+    units: [{ id: "main", title }],
+  };
 }
 
-export function nextResponse(state: WorkflowState): ProtocolResponse {
+function setPhase(state: WorkflowState, status: WorkflowStatus, phase: RuntimePhase): void {
+  state.status = status;
+  state.phase = phase;
+  state.updatedAt = nowIso();
+}
+
+function advanceToNextUnit(state: WorkflowState): void {
+  state.currentUnitIndex += 1;
+  state.verifyAttempts = 0;
+  setPhase(state, "phase_clarify", "clarify");
+}
+
+export function validateState(state: unknown): FaultSignal | undefined {
+  const result = validateWorkflowState(state);
+  if (result.ok) {
+    return undefined;
+  }
+  return faultSignal(undefined, "invalid workflow state", result.issues, false);
+}
+
+export function createWorkflow(input: CreateWorkflowInput | string): CreatedWorkflow {
+  const normalized = normalizeCreateWorkflowInput(input);
+  const timestamp = normalized.createdAt ?? nowIso();
+  const state = {
+    schemaVersion: "1.0.0",
+    workflowId: normalized.workflowId ?? createWorkflowId(),
+    mode: normalized.mode,
+    description: normalized.description,
+    status: "phase_clarify",
+    phase: "clarify",
+    units: normalized.units,
+    currentUnitIndex: 0,
+    captureEnabled: normalized.captureEnabled ?? false,
+    maxVerifyAttempts: normalized.maxVerifyAttempts ?? 3,
+    verifyAttempts: 0,
+    pendingDecisions: [],
+    decisionHistory: [],
+    outputs: {},
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  } as unknown as WorkflowState;
+
+  const stateValidation = validateWorkflowState(state);
+  if (!stateValidation.ok) {
+    const signal = faultSignal(state, "new workflow failed validation", stateValidation.issues, false);
+    return { state, signal, response: signal };
+  }
+
+  const signal = nextSignal(state);
+  return { state, signal, response: signal };
+}
+
+export function nextSignal(state: WorkflowState): ControlSignal {
+  const stateValidation = validateWorkflowState(state);
+  if (!stateValidation.ok) {
+    return faultSignal(state, "invalid workflow state", stateValidation.issues, false);
+  }
+
   switch (state.status) {
     case "phase_clarify":
-      return buildPhaseResponse(state, "clarify");
-    case "gate_clarify":
-      return buildGateResponse(state, "clarify");
-    case "phase_plan":
-      return buildPhaseResponse(state, "plan");
-    case "gate_plan":
-      return buildGateResponse(state, "plan");
+      return runSignal(state, "clarify", "Tighten the current unit until execution is safe and verification is clear.");
+    case "clarify_pending":
+      return {
+        type: "gate",
+        gate: "clarify",
+        workflow_id: state.workflowId,
+        mode: state.mode,
+        unit_id: currentUnit(state)?.id,
+        options: state.pendingDecisions.map((decision) => decision.id),
+        state_ref: workflowStatePath(state.workflowId),
+        instructions: "Collect the pending external decisions, then submit decision answers and resume clarify.",
+      };
     case "phase_execute":
+      return runSignal(state, "execute", "Perform only the clarified unit of work and leave evidence for verification.");
     case "phase_verify":
-      return buildNextTaskResponses(state);
-    case "phase_synthesize":
-      return buildSynthesizeFromState(state);
-    case "gate_verify":
-      return buildVerifyGate(state);
+      return runSignal(state, "verify", "Try to disprove the claimed result and report recoverable issues precisely.");
+    case "phase_capture":
+      return runSignal(state, "capture", "Capture only durable, reusable patterns worth saving.");
     case "completed":
     case "blocked":
     case "stopped":
-      return buildDoneResponse(state);
+      return terminalSignal(state);
     default:
-      return buildFaultResponse(state, `unknown status: ${state.status}`, [], false);
+      return faultSignal(state, `unsupported status: ${String(state.status)}`, [], false);
   }
 }
 
-function buildNextTaskResponses(state: WorkflowState): ProtocolResponse {
-  const actionable: { task: Task; phase: Phase }[] = [];
-
-  for (const task of state.tasks) {
-    if (task.status === "executing") actionable.push({ task, phase: "execute" });
-    else if (task.status === "verifying") actionable.push({ task, phase: "verify" });
-  }
-
-  const ready = readyTasks(state);
-  for (const task of ready) {
-    task.status = "executing";
-    actionable.push({ task, phase: "execute" });
-  }
-
-  if (actionable.length === 0) {
-    if (allTasksDone(state)) {
-      state.status = "completed";
-      state.updatedAt = now();
-      return buildDoneResponse(state);
-    }
-    return buildFaultResponse(state, "no actionable tasks", [], false);
-  }
-
-  if (actionable.length === 1) {
-    return buildPhaseResponse(state, actionable[0].phase, actionable[0].task.id);
-  }
-
-  return buildBatchResponse(state, actionable.map((a) => ({ phase: a.phase, taskId: a.task.id })));
+export function nextResponse(state: WorkflowState): ProtocolResponse {
+  return nextSignal(state);
 }
 
-function buildVerifyGate(state: WorkflowState): ProtocolResponse {
-  const stuck = state.tasks.find((t) => t.status === "verifying" && t.verifyAttempts >= state.escalateAfter);
-  if (!stuck) return buildFaultResponse(state, "gate_verify but no stuck task found", [], false);
-  return buildGateResponse(state, "verify", stuck.id);
-}
-
-function buildSynthesizeFromState(state: WorkflowState): ProtocolResponse {
-  if (!state.activeWork) return buildFaultResponse(state, "phase_synthesize but no active work", [], false);
-  return buildSynthesizeResponse(state, state.activeWork);
-}
-
-// ============================================================================
-// Phase output: always WorkItem[]
-// ============================================================================
-
-/**
- * Submit work items for a phase. This is the universal entry point.
- * AI always returns WorkItem[].
- * - 1 item with result → proceed directly (single agent did the work)
- * - 1 item without result → spawn it, wait for result
- * - N items → spawn all, wait for results, then synthesize
- */
-export function submitWorkItems(state: WorkflowState, phase: Phase, input: unknown, taskId?: string): MaybeResult {
-  const v = validateWorkItems(input);
-  if (!v.ok || !v.value) {
-    return { response: buildFaultResponse(state, "invalid work items", v.issues, true) };
-  }
-
-  const items = v.value;
-
-  if (items.length === 1 && allItemsHaveResults(items)) {
-    // Single item with inline result → treat as direct phase output
-    return submitPhaseOutput(state, phase, items[0].result, taskId);
-  }
-
-  // Multiple items or items without results → create work items, batch spawn
-  const next = clone(state);
-  next.activeWork = {
-    phase,
-    taskId,
-    synthesize: `Combine the results from ${items.length} work items into a single ${phase} output.`,
-    items: items.map((item) => ({
-      id: item.id,
-      role: item.role,
-      task: item.task,
-      status: (item.result !== undefined ? "done" : "pending") as "pending" | "running" | "done",
-      result: item.result !== undefined ? JSON.stringify(item.result) : undefined,
-    })),
-  };
-
-  // Check if all items already have results (all done inline)
-  if (next.activeWork.items.every((i) => i.status === "done")) {
-    next.status = "phase_synthesize";
-    next.updatedAt = now();
-    return { state: next, response: nextResponse(next) };
-  }
-
-  // Mark pending as running, return batch
-  for (const item of next.activeWork.items) {
-    if (item.status === "pending") item.status = "running";
-  }
-  next.status = "phase_synthesize"; // will route to synthesize when all done
-  next.updatedAt = now();
-  return { state: next, response: buildWorkItemBatchResponse(next, next.activeWork) };
-}
-
-/**
- * Submit a single work item result.
- */
-export function submitWorkItemResult(state: WorkflowState, itemId: string, result: string): MaybeResult {
-  if (!state.activeWork) {
-    return { response: buildFaultResponse(state, "no active work items", [], true) };
-  }
-
-  const next = clone(state);
-  const item = next.activeWork!.items.find((i) => i.id === itemId);
-  if (!item) {
-    return { response: buildFaultResponse(next, `work item ${itemId} not found`, [], true) };
-  }
-
-  item.status = "done";
-  item.result = result;
-  next.updatedAt = now();
-
-  // Check if all items done → synthesize
-  if (next.activeWork!.items.every((i) => i.status === "done")) {
-    next.status = "phase_synthesize";
-    return { state: next, response: nextResponse(next) };
-  }
-
-  // Still items running — return current state
-  return { state: next, response: buildWorkItemBatchResponse(next, next.activeWork!) };
-}
-
-/**
- * Submit synthesized result — this continues the normal phase flow.
- */
-export function submitSynthesizedResult(state: WorkflowState, input: unknown): MaybeResult {
-  if (!state.activeWork) {
-    return { response: buildFaultResponse(state, "no active work to synthesize", [], true) };
-  }
-
-  const work = state.activeWork;
-  const next = clone(state);
-  next.activeWork = undefined;
-
-  // Route to the original phase handler
-  const phaseStatus = `phase_${work.phase}` as WorkflowStatus;
-  next.status = phaseStatus;
-  next.phase = work.phase;
-
-  return submitPhaseOutput(next, work.phase, input, work.taskId);
-}
-
-// ============================================================================
-// Direct phase output (single item with result, or synthesized)
-// ============================================================================
-
-export function submitPhaseOutput(state: WorkflowState, phase: Phase, input: unknown, taskId?: string): MaybeResult {
-  switch (phase) {
-    case "clarify": return applyClarify(state, input);
-    case "plan": return applyPlan(state, input);
-    case "execute": return applyExecute(state, input, taskId);
-    case "verify": return applyVerify(state, input, taskId);
-    default:
-      return { response: buildFaultResponse(state, `unsupported phase: ${phase}`, [], false) };
-  }
-}
-
-export function submitDecisions(state: WorkflowState, input: unknown): MaybeResult {
-  if (state.status !== "gate_clarify") {
-    return { response: buildFaultResponse(state, "decisions only valid during gate_clarify", [], true) };
-  }
-
-  const v = validateDecisionAnswers(input);
-  if (!v.ok || !v.value) {
-    return { response: buildFaultResponse(state, "invalid decision answers", v.issues, true) };
-  }
-
-  const next = clone(state);
-  next.decisionHistory.push(...v.value);
-  next.pendingDecisions = [];
-  setPhase(next, "phase_clarify", "clarify");
-  return { state: next, response: nextResponse(next) };
-}
-
-export function approvePlan(state: WorkflowState): MaybeResult {
-  if (state.status !== "gate_plan") {
-    return { response: buildFaultResponse(state, "approve-plan only valid during gate_plan", [], true) };
-  }
-
-  const next = clone(state);
-  if (next.tasks.length === 0) {
-    return { response: buildFaultResponse(next, "no tasks to execute", [], true) };
-  }
-
-  const ready = readyTasks(next);
-  for (const task of ready) task.status = "executing";
-
-  setPhase(next, "phase_execute", "execute");
-  return { state: next, response: nextResponse(next) };
-}
-
-export function adjustPlan(state: WorkflowState, feedback: string): MaybeResult {
-  if (state.status !== "gate_plan") {
-    return { response: buildFaultResponse(state, "adjust-plan only valid during gate_plan", [], true) };
-  }
-
-  const next = clone(state);
-  next.planOutput = undefined;
-  next.tasks = [];
-  next.decisionHistory.push({
-    decisionId: "plan-adjustment",
-    selectedOptionId: "feedback",
-    customInput: feedback,
-  });
-  setPhase(next, "phase_plan", "plan");
-  return { state: next, response: nextResponse(next) };
-}
-
-export function resolveVerifyGate(state: WorkflowState, taskId: string, action: "continue" | "stop"): MaybeResult {
-  if (state.status !== "gate_verify") {
-    return { response: buildFaultResponse(state, "resolve-verify only valid during gate_verify", [], true) };
-  }
-
-  const next = clone(state);
-  const task = findTask(next, taskId);
-  if (!task) {
-    return { response: buildFaultResponse(next, `task ${taskId} not found`, [], true) };
-  }
-
-  if (action === "stop") {
-    task.status = "failed";
-    next.status = "blocked";
-    next.blockedReason = `User stopped task ${taskId} after ${task.verifyAttempts} verify attempts`;
-    next.updatedAt = now();
-    return { state: next, response: nextResponse(next) };
-  }
-
-  task.status = "executing";
-  setPhase(next, "phase_execute", "execute");
-  return { state: next, response: nextResponse(next) };
-}
-
-export function stopWorkflow(state: WorkflowState, reason = "stopped by user"): Result {
-  const next = clone(state);
+export function stopWorkflow(state: WorkflowState, reason = "workflow stopped"): CreatedWorkflow {
+  const next = cloneState(state);
   next.status = "stopped";
   next.blockedReason = reason;
-  next.updatedAt = now();
-  return { state: next, response: nextResponse(next) };
+  next.updatedAt = nowIso();
+  const signal = nextSignal(next);
+  return { state: next, signal, response: signal };
 }
 
-// ============================================================================
-// Phase Handlers
-// ============================================================================
-
-function applyClarify(state: WorkflowState, input: unknown): MaybeResult {
-  const v = validateClarifyOutput(input);
-  if (!v.ok || !v.value) {
-    return { response: buildFaultResponse(state, "invalid clarify output", v.issues, true) };
+export function applyDecisionAnswers(state: WorkflowState, input: unknown): CombinedResult {
+  if (state.status !== "clarify_pending") {
+    return withResponse({
+      signal: faultSignal(state, "decision answers are only valid during clarify_pending", [], true),
+    });
   }
 
-  const next = clone(state);
-  next.clarifyOutput = v.value;
+  const validation = validateDecisionAnswers(input);
+  if (!validation.ok || !validation.value) {
+    return withResponse({
+      signal: faultSignal(state, "invalid decision answers", validation.issues, true),
+    });
+  }
 
-  if (!v.value.ready) {
-    next.pendingDecisions = v.value.decisions;
-    setPhase(next, "gate_clarify", "clarify");
-    return { state: next, response: nextResponse(next) };
+  const next = cloneState(state);
+  next.decisionHistory.push(...validation.value);
+  next.pendingDecisions = [];
+  setPhase(next, "phase_clarify", "clarify");
+  return withResponse({ state: next, signal: nextSignal(next) });
+}
+
+export function submitDecisions(state: WorkflowState, input: unknown): CombinedResult {
+  return applyDecisionAnswers(state, input);
+}
+
+export function applyPhaseOutput(state: WorkflowState, phase: string, input: unknown): CombinedResult {
+  if (state.phase !== phase) {
+    return withResponse({
+      signal: faultSignal(
+        state,
+        `phase output for ${phase} is invalid while workflow phase is ${state.phase}`,
+        [],
+        true,
+      ),
+    });
+  }
+
+  switch (phase) {
+    case "clarify":
+      return applyClarify(state, input);
+    case "execute":
+      return applyExecute(state, input);
+    case "verify":
+      return applyVerify(state, input);
+    case "capture":
+      return applyCapture(state, input);
+    default:
+      return withResponse({ signal: faultSignal(state, `unsupported phase: ${phase}`, [], false) });
+  }
+}
+
+export function submitPhaseOutput(state: WorkflowState, phase: string, input: unknown): CombinedResult {
+  return applyPhaseOutput(state, phase, input);
+}
+
+function applyClarify(state: WorkflowState, input: unknown): CombinedResult {
+  if (state.status !== "phase_clarify") {
+    return withResponse({
+      signal: faultSignal(state, "clarify output is only valid during phase_clarify", [], true),
+    });
+  }
+
+  const validation = validateClarifyOutput(input);
+  if (!validation.ok || !validation.value) {
+    return withResponse({
+      signal: faultSignal(state, "invalid clarify output", validation.issues, true),
+    });
+  }
+
+  const next = cloneState(state);
+  storePhaseOutput(next, "clarify", validation.value);
+
+  if (!validation.value.ready) {
+    if (validation.value.decisions.length === 0) {
+      return withResponse({
+        signal: faultSignal(
+          state,
+          "clarify output is not ready but did not supply any external decisions",
+          [],
+          true,
+        ),
+      });
+    }
+    next.pendingDecisions = validation.value.decisions;
+    setPhase(next, "clarify_pending", "clarify");
+    return withResponse({ state: next, signal: nextSignal(next) });
   }
 
   next.pendingDecisions = [];
-  setPhase(next, "phase_plan", "plan");
-  return { state: next, response: nextResponse(next) };
+  setPhase(next, "phase_execute", "execute");
+  return withResponse({ state: next, signal: nextSignal(next) });
 }
 
-function applyPlan(state: WorkflowState, input: unknown): MaybeResult {
-  const v = validatePlanOutput(input);
-  if (!v.ok || !v.value) {
-    return { response: buildFaultResponse(state, "invalid plan output", v.issues, true) };
+function applyExecute(state: WorkflowState, input: unknown): CombinedResult {
+  if (state.status !== "phase_execute") {
+    return withResponse({
+      signal: faultSignal(state, "execute output is only valid during phase_execute", [], true),
+    });
   }
 
-  const next = clone(state);
-  next.planOutput = v.value;
-  next.tasks = v.value.tasks.map((td) => ({
-    id: td.id,
-    title: td.title,
-    scope: Array.isArray(td.scope) ? td.scope : td.scope ? [td.scope] : [],
-    context: Array.isArray(td.context) ? td.context : td.context ? [String(td.context)] : [],
-    dependsOn: Array.isArray(td.dependsOn) ? td.dependsOn : td.dependsOn ? [td.dependsOn] : [],
-    status: "pending" as const,
-    verifyAttempts: 0,
-  }));
+  const validation = validateExecuteOutput(input);
+  if (!validation.ok || !validation.value) {
+    return withResponse({
+      signal: faultSignal(state, "invalid execute output", validation.issues, true),
+    });
+  }
 
-  setPhase(next, "gate_plan", "plan");
-  return { state: next, response: nextResponse(next) };
+  const next = cloneState(state);
+  storePhaseOutput(next, "execute", validation.value);
+  setPhase(next, "phase_verify", "verify");
+  return withResponse({ state: next, signal: nextSignal(next) });
 }
 
-function applyExecute(state: WorkflowState, input: unknown, taskId?: string): MaybeResult {
-  const v = validateExecuteOutput(input);
-  if (!v.ok || !v.value) {
-    return { response: buildFaultResponse(state, "invalid execute output", v.issues, true) };
+function applyVerify(state: WorkflowState, input: unknown): CombinedResult {
+  if (state.status !== "phase_verify") {
+    return withResponse({
+      signal: faultSignal(state, "verify output is only valid during phase_verify", [], true),
+    });
   }
 
-  const next = clone(state);
-  const resolvedId = taskId ?? next.tasks.find((t) => t.status === "executing")?.id;
-  const task = resolvedId ? findTask(next, resolvedId) : undefined;
-  if (!task) {
-    return { response: buildFaultResponse(next, "no executing task", [], true) };
+  const validation = validateVerifyOutput(input);
+  if (!validation.ok || !validation.value) {
+    return withResponse({
+      signal: faultSignal(state, "invalid verify output", validation.issues, true),
+    });
   }
 
-  task.executeOutput = v.value;
-  task.status = "verifying";
-  task.verifyAttempts += 1;
-  updateWorkflowPhase(next);
-  return { state: next, response: nextResponse(next) };
+  const next = cloneState(state);
+  storePhaseOutput(next, "verify", validation.value);
+  next.lastVerifyIssues = validation.value.issues;
+
+  if (validation.value.passed) {
+    const isLastUnit = next.currentUnitIndex >= next.units.length - 1;
+    if (!isLastUnit) {
+      advanceToNextUnit(next);
+      return withResponse({ state: next, signal: nextSignal(next) });
+    }
+    if (next.captureEnabled) {
+      next.verifyAttempts = 0;
+      setPhase(next, "phase_capture", "capture");
+      return withResponse({ state: next, signal: nextSignal(next) });
+    }
+    next.verifyAttempts = 0;
+    next.status = "completed";
+    next.updatedAt = nowIso();
+    return withResponse({ state: next, signal: nextSignal(next) });
+  }
+
+  next.verifyAttempts += 1;
+
+  if (validation.value.needsHuman) {
+    if (!validation.value.decisions || validation.value.decisions.length === 0) {
+      next.status = "blocked";
+      next.blockedReason = validation.value.summary;
+      next.updatedAt = nowIso();
+      return withResponse({ state: next, signal: nextSignal(next) });
+    }
+    next.pendingDecisions = validation.value.decisions;
+    setPhase(next, "clarify_pending", "clarify");
+    return withResponse({ state: next, signal: nextSignal(next) });
+  }
+
+  if (next.verifyAttempts >= next.maxVerifyAttempts) {
+    next.status = "blocked";
+    next.blockedReason = validation.value.retryHint || validation.value.summary;
+    next.updatedAt = nowIso();
+    return withResponse({ state: next, signal: nextSignal(next) });
+  }
+
+  setPhase(next, "phase_clarify", "clarify");
+  return withResponse({ state: next, signal: nextSignal(next) });
 }
 
-function applyVerify(state: WorkflowState, input: unknown, taskId?: string): MaybeResult {
-  const v = validateVerifyOutput(input);
-  if (!v.ok || !v.value) {
-    return { response: buildFaultResponse(state, "invalid verify output", v.issues, true) };
+function applyCapture(state: WorkflowState, input: unknown): CombinedResult {
+  if (state.status !== "phase_capture") {
+    return withResponse({
+      signal: faultSignal(state, "capture output is only valid during phase_capture", [], true),
+    });
   }
 
-  const next = clone(state);
-  const resolvedId = taskId ?? next.tasks.find((t) => t.status === "verifying")?.id;
-  const task = resolvedId ? findTask(next, resolvedId) : undefined;
-  if (!task) {
-    return { response: buildFaultResponse(next, "no verifying task", [], true) };
+  const validation = validateCaptureOutput(input);
+  if (!validation.ok || !validation.value) {
+    return withResponse({
+      signal: faultSignal(state, "invalid capture output", validation.issues, true),
+    });
   }
 
-  task.verifyOutput = v.value;
-
-  if (v.value.passed) {
-    task.status = "done";
-  } else if (task.verifyAttempts >= next.escalateAfter) {
-    next.status = "gate_verify";
-    next.phase = "verify";
-    next.updatedAt = now();
-    return { state: next, response: nextResponse(next) };
-  } else {
-    task.status = "executing";
-  }
-
-  updateWorkflowPhase(next);
-  return { state: next, response: nextResponse(next) };
-}
-
-function updateWorkflowPhase(state: WorkflowState): void {
-  if (allTasksDone(state)) {
-    state.status = "completed";
-    state.updatedAt = now();
-    return;
-  }
-
-  const hasExecuting = state.tasks.some((t) => t.status === "executing");
-  const hasVerifying = state.tasks.some((t) => t.status === "verifying");
-  const hasReady = readyTasks(state).length > 0;
-
-  if (hasExecuting || hasReady) {
-    setPhase(state, "phase_execute", "execute");
-  } else if (hasVerifying) {
-    setPhase(state, "phase_verify", "verify");
-  }
+  const next = cloneState(state);
+  storePhaseOutput(next, "capture", validation.value);
+  next.status = "completed";
+  next.updatedAt = nowIso();
+  return withResponse({ state: next, signal: nextSignal(next) });
 }
