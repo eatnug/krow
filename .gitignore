@@ -1,4 +1,10 @@
 node_modules
 dist
 .claude/
+.codex/
+.gemini/
 .krow/
+.env
+.env.*
+!.env.example
+
