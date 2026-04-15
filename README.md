@@ -70,4 +70,12 @@ The wrappers use `intake --intent work` first so agents gather evidence, bundled
 - task packets under `.krow/tasks/<workflowId>/`
 - relay and baton files under `.krow/relays/<workflowId>/`
 
+When a phase or decision payload contains apostrophes, do not pass it as a single shell-quoted argument. `submit-phase` and `submit-decisions` accept `-` to read JSON from stdin, so prefer a heredoc:
+
+```bash
+krow submit-phase <workflowId> clarify - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+```
+
 The current contract is still host-assisted. `krow` does not spawn teammates itself, but it now gives the host richer scheduling metadata, durable task packets, and stricter clarify/verify payload contracts so parallel-capable hosts can behave more predictably.

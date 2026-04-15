@@ -107,10 +107,21 @@ If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work
 - In \`capture\`, write only durable reusable learnings.
 - Wait for the Agent result.
 - Extract the JSON output from the Agent response.
-- Run: \`${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
+- Run this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> '<JSON>'\`, then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
+Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
@@ -124,7 +135,7 @@ If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work
 
 - The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
 - NEVER skip the local control commands. Every transition goes through krow.
-- Always pass JSON as a single-quoted string in commands.
+- Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 `;
@@ -142,51 +153,72 @@ Treat the current user message as explicit work intent.
 
 ## Startup
 
-Run: \`${KROW_COMMAND_PLACEHOLDER} start "$ARGUMENTS"\`
+Run: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "$ARGUMENTS"\`
 
 If $ARGUMENTS is empty, ask the user what they want to do first.
+
+Parse the JSON response.
+
+If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
+- Ask the user for the full bundled question set in one message.
+- When the user answers, fold the original request plus their answers into one refined request.
+- Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<refined request>"\`
+
+If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "$ARGUMENTS"\`
 
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. Check the \`type\` field and act accordingly:
+2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
+3. Otherwise, check the \`type\` field and act accordingly:
 
-### type = "phase"
-- Spawn an Agent for this phase. DO NOT execute the prompt yourself — always delegate to a subagent.
-- Agent prompt: the \`prompt\` field.
-- Agent tools based on \`capability\`:
-  - "read": Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *)
-  - "write": Read, Grep, Glob, Edit, Write, Bash
-  - "full": all tools
+### type = "run"
+- Read \`state_ref\` before acting.
+- Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
+- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Spawn an Agent for this phase. DO NOT execute the phase yourself.
+- Tool policy by phase:
+  - \`clarify\`: Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *), Bash(rg *), Agent
+  - \`execute\`: Read, Grep, Glob, Edit, Write, Bash, Agent
+  - \`verify\`: Read, Grep, Glob, Bash, Agent
+  - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
+- In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
+- In \`execute\`, complete only the current unit. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
+- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification. Always include concrete checks, evidence, and any unverified claims in the payload.
+- In \`capture\`, write only durable reusable learnings.
 - Wait for the agent to return its result.
 - Extract the JSON output from the agent's response.
-- Run the command in \`onComplete\`, replacing \`'<JSON>'\` with the minified JSON (single-quoted).
-
-### type = "batch"
-- Spawn ALL agents in parallel (send multiple Agent tool calls in a single message).
-- Each entry in \`responses\` is a phase response — spawn one agent per entry.
-- Apply the same capability-based tool restrictions to each agent.
-- As each agent completes, run its \`onComplete\` command with the JSON result.
+- Run this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": Present each decision in \`decisions\` to the user. Collect their answers. Run \`onComplete\` with the answers JSON.
-- If \`gate\` = "plan": Present \`tasks\`, \`approach\`, and \`risks\` to the user. If they approve, run the approve command in \`onComplete\`. If they want changes, run the adjust command mentioned in \`instructions\`.
-- If \`gate\` = "verify": A task has failed verification multiple times. Present \`lastIssues\` and \`verifyAttempts\` to the user. Follow the \`instructions\` field — it contains the continue and stop commands.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
+Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
+- For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
 - Report the \`message\` to the user. Stop.
 
 ### type = "fault"
-- If \`recoverable\` = true, review the \`issues\` and retry.
+- If \`recoverable\` = true, review \`error\` and \`issues\`, fix the input or state problem, then continue with \`${KROW_COMMAND_PLACEHOLDER} next <workflow_id>\` when a workflow id is present.
 - If \`recoverable\` = false, report the \`error\` to the user and stop.
 
 ## Rules
 
-- NEVER execute phase prompts yourself. ALWAYS spawn an Agent.
-- NEVER skip the orchestrator commands. Every phase transition goes through krow.
-- Always pass JSON as a single-quoted string in commands.
+- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- NEVER skip the local control commands. Every transition goes through krow.
+- Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
-- For batch responses, spawn all agents in a SINGLE message to maximize parallelism.
+- State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 `;
 
 const CLAUDE_KROW_COMMAND = `---
@@ -240,10 +272,21 @@ If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work
 - In \`capture\`, write only durable reusable learnings.
 - Wait for the Agent result.
 - Extract the JSON output from the Agent response.
-- Run: \`${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
+- Run this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> '<JSON>'\`, then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
+Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
@@ -257,7 +300,7 @@ If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work
 
 - The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
 - NEVER skip the local control commands. Every transition goes through krow.
-- Always pass JSON as a single-quoted string in commands.
+- Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 `;
@@ -303,10 +346,21 @@ If intake is not blocked, run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDE
 - In \`execute\`, complete only the current unit. If the workflow state shows other ready sibling units, use that graph metadata for host scheduling; if the host cannot parallelize them, process the ready units step by step without skipping transitions.
 - In \`verify\`, try to disprove the claimed result before accepting it. Always include concrete checks, evidence, and any unverified claims.
 - When the phase work is complete, collect your result as one JSON object matching \`required_schema\`.
-- Run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> '<JSON>'\`, replacing placeholders from the signal and minifying JSON first.
+- Run via run_shell_command using this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, run \`${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> '<JSON>'\` via run_shell_command, then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
+- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run via run_shell_command:
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
+Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - For any other gate, follow \`instructions\` exactly and only stop for real external input.
 
 ### type = "done"
@@ -320,7 +374,7 @@ If intake is not blocked, run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDE
 
 - The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
 - NEVER skip the local control commands. Every transition goes through krow.
-- Always pass JSON as a single-quoted string in commands.
+- Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
 """

@@ -44,12 +44,16 @@ export function stopCommand(workflowId: string, reason = "<reason>"): string {
   return `${cliPrefix()} stop ${workflowId} '${reason}'`;
 }
 
+function stdinJsonCommand(command: string): string {
+  return `${command} - <<'KROW_JSON'\n<JSON>\nKROW_JSON`;
+}
+
 export function submitPhaseCommand(workflowId: string, phase: RuntimePhase): string {
-  return `${cliPrefix()} submit-phase ${workflowId} ${phase} '<JSON>'`;
+  return stdinJsonCommand(`${cliPrefix()} submit-phase ${workflowId} ${phase}`);
 }
 
 export function submitDecisionsCommand(workflowId: string): string {
-  return `${cliPrefix()} submit-decisions ${workflowId} '<JSON>'`;
+  return stdinJsonCommand(`${cliPrefix()} submit-decisions ${workflowId}`);
 }
 
 export function runSignalInstructions(
@@ -64,6 +68,7 @@ export function runSignalInstructions(
     `Read the current workflow state from ${stateRef} before responding.`,
     `Return only a single JSON object matching ${schemaRef}.`,
     `When complete, run: ${submitPhaseCommand(workflowId, phase)}`,
+    "Do not inline JSON as a quoted shell argument. Replace the <JSON> heredoc line with the exact payload so apostrophes in model output cannot break the shell.",
   ];
 
   const graphStrategy = typeof context?.graphStrategy === "string" ? context.graphStrategy : undefined;
@@ -124,6 +129,7 @@ export function clarifyGateInstructions(workflowId: string, stateRef: string): s
     `Workflow ${workflowId} is waiting for bundled clarification decisions.`,
     `Read the current decision set from ${stateRef}.`,
     `Collect all requested decisions from the user, then run: ${submitDecisionsCommand(workflowId)}`,
+    "Replace the <JSON> heredoc line with the exact answers payload instead of quoting it inline.",
     `After submitting the answers, resume the workflow with: ${resumeCommand(workflowId)}`,
   ].join("\n");
 }

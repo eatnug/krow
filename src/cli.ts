@@ -121,8 +121,8 @@ function printUsage(): void {
       "  status <workflowId> [--root <dir>]",
       "  next <workflowId> [--root <dir>]",
       "  resume <workflowId> [--root <dir>]",
-      "  submit-phase <workflowId> <phase> <json|path> [--root <dir>]",
-      "  submit-decisions <workflowId> <json|path> [--root <dir>]",
+      "  submit-phase <workflowId> <phase> <json|path|-> [--root <dir>]",
+      "  submit-decisions <workflowId> <json|path|-> [--root <dir>]",
       "  stop <workflowId> [reason] [--root <dir>]",
       "",
       "Local control commands:",
@@ -176,6 +176,10 @@ function parseFlags(args: string[]): { positionals: string[]; flags: FlagMap } {
 
 function readJsonInput(value: string): unknown {
   const trimmed = value.trim();
+  if (trimmed === "-") {
+    return JSON.parse(readFileSync(0, "utf8")) as unknown;
+  }
+
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     return JSON.parse(trimmed);
   }
@@ -1212,7 +1216,7 @@ function handleResume(args: string[], flags: FlagMap): void {
 function handleSubmitPhase(args: string[], flags: FlagMap): void {
   const [workflowId, phase, inputValue] = args;
   if (!workflowId || !phase || !inputValue) {
-    throw new Error("submit-phase requires <workflowId> <phase> <json|path>");
+    throw new Error("submit-phase requires <workflowId> <phase> <json|path|->");
   }
   if (!canonicalPhases.has(phase as RuntimePhase)) {
     throw new Error(`unsupported phase: ${phase}`);
@@ -1233,7 +1237,7 @@ function handleSubmitPhase(args: string[], flags: FlagMap): void {
 function handleSubmitDecisions(args: string[], flags: FlagMap): void {
   const [workflowId, inputValue] = args;
   if (!workflowId || !inputValue) {
-    throw new Error("submit-decisions requires <workflowId> <json|path>");
+    throw new Error("submit-decisions requires <workflowId> <json|path|->");
   }
 
   const state = loadValidatedWorkflowState(workflowId, flags);
