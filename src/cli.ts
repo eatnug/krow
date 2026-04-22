@@ -73,19 +73,63 @@ const questionPatterns = [
   /^\s*(뭐|무엇|왜|어떻게|설명|알려줘)\b/,
 ];
 
+const pathLikeAnchorPattern = /(?:^|[\s(])(?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+/i;
+const pathLikePattern = /(?:^|[\s(])((?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+)/gi;
+const rootFileAnchorPattern =
+  /\b(?:(?:AGENTS|CLAUDE|README|CHANGELOG|Cargo|Makefile|Dockerfile)(?:\.[A-Za-z0-9_.-]+)?|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[A-Za-z0-9_.-]+)?\.json|vite\.config\.[A-Za-z0-9_.-]+|vitest\.config\.[A-Za-z0-9_.-]+|jest\.config\.[A-Za-z0-9_.-]+)\b/i;
+
 const anchorPatterns = [
-  /(?:^|[\s(])(?:src|app|lib|tests?|packages|services)\/[^\s)]+/i,
+  pathLikeAnchorPattern,
+  rootFileAnchorPattern,
   /\b[A-Z][A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?\b/,
   /\b(?:error|exception|stack trace|test|failing|regression|bug)\b/i,
   /(에러|오류|테스트|버그|실패|회귀)/,
 ];
 
-const filePathPattern = /(?:^|[\s(])((?:src|app|lib|tests?|packages|services)\/[^\s)]+)/gi;
+const rootFilePattern =
+  /\b((?:AGENTS|CLAUDE|README|CHANGELOG|Cargo|Makefile|Dockerfile)(?:\.[A-Za-z0-9_.-]+)?|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[A-Za-z0-9_.-]+)?\.json|vite\.config\.[A-Za-z0-9_.-]+|vitest\.config\.[A-Za-z0-9_.-]+|jest\.config\.[A-Za-z0-9_.-]+)\b/g;
 const symbolPattern = /\b([A-Z][A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?)\b/g;
 const ticketPattern = /\b(?:[A-Z]+-\d+|#\d+)\b/g;
 const errorPattern =
   /\b((?:TypeError|ReferenceError|SyntaxError|Error|Exception|stack trace|failing test|test failure|bug|regression)[^,.;\n]*)/gi;
 const testPattern = /\b([A-Za-z0-9_./-]*(?:test|spec)\.[A-Za-z0-9_.-]+)\b/gi;
+const verificationCommandPattern =
+  /\b((?:cargo\s+(?:test|check|clippy|build)|(?:npm|pnpm|yarn|bun)\s+(?:(?:run|exec)\s+)?(?:test|typecheck|check|lint|build)|uv\s+run\s+(?:pytest|ruff|mypy|pyright)[^\n,;]*|pytest[^\n,;]*|go\s+test[^\n,;]*|swift\s+test[^\n,;]*|dotnet\s+test[^\n,;]*|mvn\s+test[^\n,;]*|(?:\.\/)?gradlew\s+test[^\n,;]*|xcodebuild\s+test[^\n,;]*|npx\s+(?:playwright\s+test|vitest|jest|tsc\s+--noEmit)[^\n,;]*)[^\n,;]*)/gi;
+const verificationSurfacePattern =
+  /(?:^|\n)\s*(?:[-*]\s*)?(?:verification|verify|tests?|checks?|run|repro(?:duction)?|validate|validation|manual qa)\s*:?\s+([^\n]+)/gi;
+const proseSymbolStopWords = new Set([
+  "Acceptance",
+  "Add",
+  "Build",
+  "Change",
+  "Check",
+  "Checks",
+  "Create",
+  "Criteria",
+  "Debug",
+  "Delete",
+  "Edit",
+  "Expected",
+  "Fix",
+  "Focus",
+  "Implement",
+  "Remove",
+  "Rename",
+  "Request",
+  "Result",
+  "Run",
+  "Ship",
+  "Should",
+  "Success",
+  "Surface",
+  "Test",
+  "Tests",
+  "Unit",
+  "Update",
+  "Verification",
+  "Verify",
+  "Write",
+]);
 
 const localControlDescriptions: Record<LocalControlCommandName, string> = {
   route: "Classify a message as chat or work without creating workflow state.",
@@ -243,6 +287,10 @@ function captureAll(message: string, pattern: RegExp): string[] {
   return unique(matches.map((value) => value.trim()).filter(Boolean));
 }
 
+function extractSymbols(message: string): string[] {
+  return captureAll(message, symbolPattern).filter((symbol) => !proseSymbolStopWords.has(symbol));
+}
+
 function cleanMessage(message: string): string {
   return message.trim();
 }
@@ -331,11 +379,20 @@ function routeRequest(
 }
 
 function extractAnchors(message: string): RequestAnchors {
+  const filePaths = unique([...captureAll(message, pathLikePattern), ...captureAll(message, rootFilePattern)]);
+  const tests = captureAll(message, testPattern);
+  const verificationSurfaces = unique([
+    ...tests,
+    ...captureAll(message, verificationCommandPattern),
+    ...captureAll(message, verificationSurfacePattern),
+  ]);
+
   return {
-    filePaths: captureAll(message, filePathPattern),
-    symbols: captureAll(message, symbolPattern),
+    filePaths,
+    symbols: extractSymbols(message).filter((symbol) => !filePaths.includes(symbol)),
     errors: captureAll(message, errorPattern),
-    tests: captureAll(message, testPattern),
+    tests,
+    verificationSurfaces,
     tickets: captureAll(message, ticketPattern),
   };
 }
@@ -346,8 +403,13 @@ function hasAnyAnchor(anchors: RequestAnchors): boolean {
     anchors.symbols.length > 0 ||
     anchors.errors.length > 0 ||
     anchors.tests.length > 0 ||
+    anchors.verificationSurfaces.length > 0 ||
     anchors.tickets.length > 0
   );
+}
+
+function hasVerificationSurface(anchors: RequestAnchors): boolean {
+  return anchors.tests.length > 0 || anchors.verificationSurfaces.length > 0;
 }
 
 function looksGeneric(message: string): boolean {
@@ -423,7 +485,7 @@ function inferUnitPriority(objective: string, anchors: RequestAnchors, kind: Wor
   if (kind === "integration") {
     return "high";
   }
-  if (anchors.errors.length > 0 || anchors.tests.length > 0 || anchors.tickets.length > 0) {
+  if (anchors.errors.length > 0 || hasVerificationSurface(anchors) || anchors.tickets.length > 0) {
     return "high";
   }
   if (looksLikeFix(objective) || looksLikeCreate(objective)) {
@@ -461,8 +523,10 @@ function inferAcceptanceCriteria(objective: string, anchors: RequestAnchors, sco
     criteria.push("The requested behavior or artifact exists on the intended surface and stays bounded to this unit.");
   }
 
-  if (anchors.tests.length > 0) {
-    criteria.push(`Verification can reference ${anchors.tests.join(", ")} without broadening into unrelated surfaces.`);
+  if (hasVerificationSurface(anchors)) {
+    criteria.push(
+      `Verification can reference ${unique([...anchors.tests, ...anchors.verificationSurfaces]).join(", ")} without broadening into unrelated surfaces.`,
+    );
   }
 
   if (scope.length > 0) {
@@ -481,7 +545,7 @@ function inferSharedRisks(objective: string, anchors: RequestAnchors, scope: str
   if (anchors.errors.length > 0) {
     risks.push("A narrow fix can mask the symptom without proving the underlying failure surface is covered.");
   }
-  if (anchors.tests.length === 0 && (looksLikeFix(objective) || looksLikeCreate(objective))) {
+  if (!hasVerificationSurface(anchors) && (looksLikeFix(objective) || looksLikeCreate(objective))) {
     risks.push("Verification surface is implicit, so clarify must lock down what proves the result.");
   }
   if (scope.some((item) => /(?:package\.json|tsconfig|vite\.config|eslint|prettier|pnpm-lock|package-lock|yarn\.lock)/i.test(item))) {
@@ -564,6 +628,7 @@ function buildIntegrationUnit(
     symbols: unique(priorUnits.flatMap((unit) => unit.anchors?.symbols ?? [])),
     errors: unique(priorUnits.flatMap((unit) => unit.anchors?.errors ?? [])),
     tests: unique(priorUnits.flatMap((unit) => unit.anchors?.tests ?? [])),
+    verificationSurfaces: unique(priorUnits.flatMap((unit) => unit.anchors?.verificationSurfaces ?? [])),
     tickets: unique(priorUnits.flatMap((unit) => unit.anchors?.tickets ?? [])),
   }, "parallel_fanout");
 }
@@ -790,7 +855,7 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
       kind: "inspect_tests",
       priority: "medium",
       reason: "failing behavior often has existing tests or needs a check surface",
-      targets: anchors.tests,
+      targets: unique([...anchors.tests, ...anchors.verificationSurfaces]),
     });
   }
 
@@ -804,7 +869,7 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
       kind: "inspect_tests",
       priority: "medium",
       reason: "new work should identify the likely verification surface early",
-      targets: anchors.tests,
+      targets: unique([...anchors.tests, ...anchors.verificationSurfaces]),
     });
   }
 
@@ -819,7 +884,7 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
     missingEvidence.push("acceptance criteria");
   }
 
-  if ((looksLikeFix(objective) || looksLikeCreate(objective)) && anchors.tests.length === 0) {
+  if ((looksLikeFix(objective) || looksLikeCreate(objective)) && !hasVerificationSurface(anchors)) {
     questions.push("What concrete test, reproduction, or verification surface should prove the result is correct?");
     missingEvidence.push("verification surface");
   }

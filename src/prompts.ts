@@ -94,6 +94,10 @@ function graphContextBlock(state: WorkflowState, unit: WorkflowUnit | undefined)
     lines.push(`- Acceptance criteria: ${unit.acceptanceCriteria.join(" | ")}`);
   }
 
+  if (Array.isArray(unit?.anchors?.verificationSurfaces) && unit.anchors.verificationSurfaces.length > 0) {
+    lines.push(`- Verification surfaces: ${unit.anchors.verificationSurfaces.join(" | ")}`);
+  }
+
   if (Array.isArray(unit?.sharedRisks) && unit.sharedRisks.length > 0) {
     lines.push(`- Shared risks: ${unit.sharedRisks.join(" | ")}`);
   }

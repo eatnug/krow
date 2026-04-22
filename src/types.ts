@@ -439,6 +439,7 @@ export interface RequestAnchors {
   symbols: string[];
   errors: string[];
   tests: string[];
+  verificationSurfaces: string[];
   tickets: string[];
 }
 

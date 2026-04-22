@@ -174,6 +174,7 @@ function buildUnitContext(state: WorkflowState, unit: WorkflowUnit): string {
     `- Symbols: ${(unit.anchors?.symbols ?? []).join(", ") || "(none)"}`,
     `- Errors: ${(unit.anchors?.errors ?? []).join(", ") || "(none)"}`,
     `- Tests: ${(unit.anchors?.tests ?? []).join(", ") || "(none)"}`,
+    `- Verification surfaces: ${(unit.anchors?.verificationSurfaces ?? []).join(", ") || "(none)"}`,
     `- Tickets: ${(unit.anchors?.tickets ?? []).join(", ") || "(none)"}`,
     "",
     "## Intake Notes",
