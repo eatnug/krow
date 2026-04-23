@@ -19,6 +19,7 @@ import {
   unitRelayPath,
   unitResultPath,
   unitStatusPath,
+  projectLanguagePath,
   workflowRelayRootPath,
   workflowStatePath,
   workflowTaskIndexPath,
@@ -165,9 +166,17 @@ function buildUnitBrief(state: WorkflowState, unit: WorkflowUnit): string {
   return `${lines.join("\n")}\n`;
 }
 
-function buildUnitContext(state: WorkflowState, unit: WorkflowUnit): string {
+function buildUnitContext(state: WorkflowState, unit: WorkflowUnit, rootDir = process.cwd()): string {
+  const languagePath = projectLanguagePath();
+  const languageExists = existsSync(absolutePath(languagePath, rootDir));
   const lines = [
     `# Context for ${unit.id}`,
+    "",
+    "## Project Language",
+    `- Ref: ${languagePath}`,
+    `- Status: ${languageExists ? "present" : "missing"}`,
+    "- Use: read this file when wording, domain terms, module names, or local architectural language matter.",
+    "- Rule: keep temporary language proposals in this task packet; only promote durable approved terms to the project language file.",
     "",
     "## Anchors",
     `- Files: ${(unit.anchors?.filePaths ?? []).join(", ") || "(none)"}`,
@@ -332,7 +341,7 @@ function syncWorkflowTaskPackets(state: WorkflowState, rootDir = process.cwd()):
   for (const unit of state.units) {
     mkdirSync(absolutePath(unitArtifactsDirPath(state.workflowId, unit.id), rootDir), { recursive: true });
     writeTextFile(unitBriefPath(state.workflowId, unit.id), buildUnitBrief(state, unit), rootDir);
-    writeTextFile(unitContextPath(state.workflowId, unit.id), buildUnitContext(state, unit), rootDir);
+    writeTextFile(unitContextPath(state.workflowId, unit.id), buildUnitContext(state, unit, rootDir), rootDir);
     writeTextFile(unitStatusPath(state.workflowId, unit.id), buildUnitStatus(state, unit), rootDir);
     writeTextFile(unitResultPath(state.workflowId, unit.id), buildUnitResult(state, unit), rootDir);
 
@@ -408,4 +417,5 @@ export {
   unitResultPath,
   unitBatonPath,
   unitRelayPath,
+  projectLanguagePath,
 };

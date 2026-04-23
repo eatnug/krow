@@ -9,6 +9,12 @@ const MANAGED_MARKER = "Managed by krow init";
 const KROW_COMMAND_PLACEHOLDER = "__KROW_COMMAND__";
 const BOOTSTRAP_RELATIVE_PATH = [".krow", "bin", "krow-bootstrap.mjs"];
 const RUNTIME_DIST_RELATIVE_PATH = [".krow", "runtime", "dist"];
+const PROJECT_LANGUAGE_RELATIVE_PATH = [".krow", "language.md"];
+
+const PROJECT_LANGUAGE = `# Project Language
+
+This file defines the approved local language for this codebase.
+`;
 
 const KROW_BOOTSTRAP = `#!/usr/bin/env node
 
@@ -138,6 +144,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
+- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
 const CODEX_WORK_SKILL = `---
@@ -219,6 +226,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
+- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
 const CLAUDE_KROW_COMMAND = `---
@@ -303,6 +311,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
+- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
 const GEMINI_KROW_COMMAND = `# ${MANAGED_MARKER}
@@ -377,6 +386,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
+- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 """
 `;
 
@@ -452,6 +462,19 @@ async function writeManagedFile(targetPath, content, force) {
   return exists ? "updated" : "created";
 }
 
+async function writeSeedFile(targetPath, content) {
+  const exists = await pathExists(targetPath);
+
+  if (exists) {
+    const existing = await fs.readFile(targetPath, "utf8");
+    return existing === content ? "unchanged" : "skipped (already exists)";
+  }
+
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, content, "utf8");
+  return "created";
+}
+
 async function installRuntime(packageRoot, home) {
   const sourceDir = path.join(packageRoot, "dist");
   const sourceCli = path.join(sourceDir, "cli.js");
@@ -491,8 +514,14 @@ export async function runInit({ force, global: isGlobal, home }) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const packageRoot = path.resolve(scriptDir, "..");
   const results = [];
+  const projectLanguagePath = path.join(home, ...PROJECT_LANGUAGE_RELATIVE_PATH);
 
   results.push(await installRuntime(packageRoot, home));
+  results.push({
+    label: "project language",
+    path: projectLanguagePath,
+    status: await writeSeedFile(projectLanguagePath, PROJECT_LANGUAGE),
+  });
 
   const targets = [
     {

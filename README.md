@@ -22,8 +22,11 @@ That installs:
 - Codex `$work`
 - Claude Code `/krow`
 - Gemini CLI `/krow`
+- `.krow/language.md`, a seed file for the target repo's approved local language
 
 The generated wrappers call a local bootstrap launcher that executes a runtime copy installed under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
+
+`init` only creates `.krow/language.md` when it is missing. Once a project starts filling this file with canonical terms, module names, or domain wording, later `init` runs leave it untouched.
 
 ## Core stance
 
@@ -69,6 +72,8 @@ The wrappers use `intake --intent work` first so agents gather evidence, bundled
 - workflow state under `.krow/state/workflows/<workflowId>.json`
 - task packets under `.krow/tasks/<workflowId>/`
 - relay and baton files under `.krow/relays/<workflowId>/`
+
+Each task context also includes a `Project Language` section that points to `.krow/language.md`. Workers should read it when wording, domain terms, module names, or local architectural language matter. Temporary language proposals belong in the task packet; only durable approved terms should be promoted to `.krow/language.md`.
 
 When a phase or decision payload contains apostrophes, do not pass it as a single shell-quoted argument. `submit-phase` and `submit-decisions` accept `-` to read JSON from stdin, so prefer a heredoc:
 

@@ -3,6 +3,7 @@ import path from "node:path";
 export const STATE_DIR = ".krow/state/workflows";
 export const TASKS_DIR = ".krow/tasks";
 export const RELAYS_DIR = ".krow/relays";
+export const PROJECT_LANGUAGE_FILE = ".krow/language.md";
 
 export function absoluteRoot(rootDir = process.cwd()): string {
   return path.resolve(rootDir);
@@ -10,6 +11,10 @@ export function absoluteRoot(rootDir = process.cwd()): string {
 
 export function workflowStatePath(workflowId: string): string {
   return `${STATE_DIR}/${workflowId}.json`;
+}
+
+export function projectLanguagePath(): string {
+  return PROJECT_LANGUAGE_FILE;
 }
 
 export function absoluteWorkflowStatePath(workflowId: string, rootDir = process.cwd()): string {
