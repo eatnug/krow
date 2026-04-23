@@ -10,6 +10,8 @@ export function cliPrefix(): string {
   const arg1 = process.argv[1] ?? "";
   if (arg1.includes("cli.ts") || arg1.includes("cli.js")) {
     cachedPrefix = `node ${arg1}`;
+  } else if (process.env.npm_command === "exec" || process.env.npm_execpath) {
+    cachedPrefix = "npx krow-cli";
   } else {
     cachedPrefix = "krow";
   }

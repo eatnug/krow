@@ -65,88 +65,6 @@ function renderManagedContent(template, home) {
   return template.split(KROW_COMMAND_PLACEHOLDER).join(krowCommand(home));
 }
 
-const CODEX_KROW_SKILL = `---
-name: krow
-description: Primary krow entry skill for actionable engineering work. Use only when the user explicitly invokes \`$krow\` to request code, files, tests, config, or other artifacts to be created, fixed, refactored, removed, investigated, or verified.
----
-
-<!-- ${MANAGED_MARKER} -->
-
-# krow
-
-Treat the current user message as explicit work intent.
-
-## Startup
-
-Run: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "$ARGUMENTS"\`
-
-If $ARGUMENTS is empty, ask the user what they want to do first.
-
-Parse the JSON response.
-
-If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
-- Ask the user for the full bundled question set in one message.
-- When the user answers, fold the original request plus their answers into one refined request.
-- Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<refined request>"\`
-
-If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "$ARGUMENTS"\`
-
-## Loop
-
-1. Parse the JSON response from the last krow command.
-2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
-3. Otherwise, check the \`type\` field and act accordingly:
-
-### type = "run"
-- Read \`state_ref\` before acting.
-- Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
-- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
-- Spawn an Agent for this phase. DO NOT execute the phase yourself.
-- Tool policy by phase:
-  - \`clarify\`: Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *), Bash(rg *), Agent
-  - \`execute\`: Read, Grep, Glob, Edit, Write, Bash, Agent
-  - \`verify\`: Read, Grep, Glob, Bash, Agent
-  - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
-- In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
-- In \`execute\`, complete only the current unit. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
-- In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification. Always include concrete checks, evidence, and any unverified claims in the payload.
-- In \`capture\`, write only durable reusable learnings.
-- Wait for the Agent result.
-- Extract the JSON output from the Agent response.
-- Run this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
-\`\`\`bash
-${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> - <<'KROW_JSON'
-<JSON>
-KROW_JSON
-\`\`\`
-
-### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run:
-\`\`\`bash
-${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
-<JSON>
-KROW_JSON
-\`\`\`
-Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
-- For any other gate, follow \`instructions\` exactly and only stop for real external input.
-
-### type = "done"
-- Report the \`message\` to the user. Stop.
-
-### type = "fault"
-- If \`recoverable\` = true, review \`error\` and \`issues\`, fix the input or state problem, then continue with \`${KROW_COMMAND_PLACEHOLDER} next <workflow_id>\` when a workflow id is present.
-- If \`recoverable\` = false, report the \`error\` to the user and stop.
-
-## Rules
-
-- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
-- NEVER skip the local control commands. Every transition goes through krow.
-- Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
-- Minify JSON before passing to commands (no newlines).
-- State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
-- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
-`;
-
 const CODEX_WORK_SKILL = `---
 name: work
 description: Explicit work-intake skill for actionable engineering tasks. Use only when the user explicitly invokes \`$work\` to request code, files, tests, config, or other artifacts to be created, fixed, refactored, removed, investigated, or verified.
@@ -157,6 +75,12 @@ description: Explicit work-intake skill for actionable engineering tasks. Use on
 # Work
 
 Treat the current user message as explicit work intent.
+
+## Command Authority
+
+Use only the exact bootstrap command rendered in this file for krow control operations.
+Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
+Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
 
 ## Startup
 
@@ -240,6 +164,12 @@ description: Map the current codebase or requested scope into the project's appr
 
 Describe the target codebase or requested scope using the project's approved local language.
 
+## Command Authority
+
+Use only the exact bootstrap command rendered in this file for krow control operations.
+Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
+Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
+
 ## Startup
 
 If $ARGUMENTS is empty, map from the repository's likely app entrypoints and major module surfaces.
@@ -267,11 +197,11 @@ Acceptance criteria:
 
 Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<normalized request>"\`
 
-Then continue using the same Loop and Rules from the installed \`$krow\` skill. If those instructions are not already in context, read \`.codex/skills/krow/SKILL.md\` and follow its Loop section exactly.
+Then continue using the same Loop and Rules from the installed \`$work\` skill. If those instructions are not already in context, read \`.codex/skills/work/SKILL.md\` and follow its Loop section exactly.
 `;
 
-const CLAUDE_KROW_COMMAND = `---
-description: Run actionable engineering work through the krow harness.
+const CLAUDE_WORK_COMMAND = `---
+description: Run actionable engineering work through the work intake.
 argument-hint: "<request>"
 arguments:
   - request
@@ -280,9 +210,15 @@ allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 <!-- ${MANAGED_MARKER} -->
 
-# krow
+# work
 
 Treat \`$request\` as explicit work intent.
+
+## Command Authority
+
+Use only the exact bootstrap command rendered in this file for krow control operations.
+Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
+Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
 
 ## Startup
 
@@ -355,12 +291,18 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
-const GEMINI_KROW_COMMAND = `# ${MANAGED_MARKER}
+const GEMINI_WORK_COMMAND = `# ${MANAGED_MARKER}
 
-description = "Run actionable engineering work through the krow harness."
+description = "Run actionable engineering work through the work intake."
 
 prompt = """
 Treat {{args}} as explicit work intent.
+
+## Command Authority
+
+Use only the exact bootstrap command rendered in this file for krow control operations.
+Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
+Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
 
 ## Startup
 
@@ -439,7 +381,7 @@ function printUsage() {
       "  krow remove [-g | --global] [--home <dir>]",
       "",
       "Commands:",
-      "  init      Install Codex $krow, Claude Code /krow, and Gemini CLI /krow wrappers",
+      "  init      Install Codex $work, Claude Code /work, and Gemini CLI /work wrappers",
       "  remove    Remove installed Codex, Claude Code, and Gemini CLI wrappers",
       "",
       "Flags:",
@@ -548,6 +490,34 @@ async function removePathIfExists(targetPath) {
   return "removed";
 }
 
+async function removeEmptyParentDirectories(targetPath, boundaryPath) {
+  let dir = path.dirname(targetPath);
+  while (dir !== boundaryPath && dir !== path.dirname(dir)) {
+    try {
+      await fs.rmdir(dir);
+      dir = path.dirname(dir);
+    } catch {
+      break;
+    }
+  }
+}
+
+async function removeManagedFileIfExists(targetPath, boundaryPath) {
+  const exists = await pathExists(targetPath);
+  if (!exists) {
+    return "skipped (not found)";
+  }
+
+  const content = await fs.readFile(targetPath, "utf8");
+  if (!content.includes(MANAGED_MARKER)) {
+    return "skipped (not managed by krow)";
+  }
+
+  await fs.unlink(targetPath);
+  await removeEmptyParentDirectories(targetPath, boundaryPath);
+  return "removed";
+}
+
 export async function runInit({ force, global: isGlobal, home }) {
   if (home == null) {
     home = isGlobal ? os.homedir() : process.cwd();
@@ -571,11 +541,6 @@ export async function runInit({ force, global: isGlobal, home }) {
       content: KROW_BOOTSTRAP,
     },
     {
-      label: "Codex $krow skill",
-      path: path.join(home, ".codex", "skills", "krow", "SKILL.md"),
-      content: renderManagedContent(CODEX_KROW_SKILL, home),
-    },
-    {
       label: "Codex $work skill",
       path: path.join(home, ".codex", "skills", "work", "SKILL.md"),
       content: renderManagedContent(CODEX_WORK_SKILL, home),
@@ -586,20 +551,42 @@ export async function runInit({ force, global: isGlobal, home }) {
       content: renderManagedContent(CODEX_LANGUAGE_MAP_SKILL, home),
     },
     {
-      label: "Claude Code /krow command",
-      path: path.join(home, ".claude", "commands", "krow.md"),
-      content: renderManagedContent(CLAUDE_KROW_COMMAND, home),
+      label: "Claude Code /work command",
+      path: path.join(home, ".claude", "commands", "work.md"),
+      content: renderManagedContent(CLAUDE_WORK_COMMAND, home),
     },
     {
-      label: "Gemini CLI /krow command",
-      path: path.join(home, ".gemini", "commands", "krow.toml"),
-      content: renderManagedContent(GEMINI_KROW_COMMAND, home),
+      label: "Gemini CLI /work command",
+      path: path.join(home, ".gemini", "commands", "work.toml"),
+      content: renderManagedContent(GEMINI_WORK_COMMAND, home),
     },
   ];
 
   for (const target of targets) {
     const status = await writeManagedFile(target.path, target.content, force);
     results.push({ ...target, status });
+  }
+
+  const legacyTargets = [
+    {
+      label: "legacy Codex $krow skill",
+      path: path.join(home, ".codex", "skills", "krow", "SKILL.md"),
+    },
+    {
+      label: "legacy Claude Code /krow command",
+      path: path.join(home, ".claude", "commands", "krow.md"),
+    },
+    {
+      label: "legacy Gemini CLI /krow command",
+      path: path.join(home, ".gemini", "commands", "krow.toml"),
+    },
+  ];
+
+  for (const target of legacyTargets) {
+    results.push({
+      ...target,
+      status: await removeManagedFileIfExists(target.path, home),
+    });
   }
 
   process.stdout.write(
@@ -646,8 +633,16 @@ export async function runRemove({ global: isGlobal, home }) {
       path: path.join(home, ".claude", "commands", "krow.md"),
     },
     {
+      label: "Claude Code /work command",
+      path: path.join(home, ".claude", "commands", "work.md"),
+    },
+    {
       label: "Gemini CLI /krow command",
       path: path.join(home, ".gemini", "commands", "krow.toml"),
+    },
+    {
+      label: "Gemini CLI /work command",
+      path: path.join(home, ".gemini", "commands", "work.toml"),
     },
   ];
 

@@ -5,7 +5,7 @@
 It packages three things:
 - a lean execution contract
 - a runtime-agnostic state and signal model
-- host wrappers that expose explicit `krow` entrypoints without polluting the core prompts
+- host wrappers that expose explicit `work` entrypoints without polluting the core prompts
 
 ## Install
 
@@ -16,13 +16,13 @@ npx krow-cli init
 ```
 
 The published package name is `krow-cli`. The installed command remains `krow`.
+Use `npx krow-cli <command>` for one-off npm execution; `npx krow <command>` resolves a different npm package and cannot run the CLI.
 
 That installs:
-- Codex `$krow`
 - Codex `$work`
 - Codex `$language-map`
-- Claude Code `/krow`
-- Gemini CLI `/krow`
+- Claude Code `/work`
+- Gemini CLI `/work`
 - `.krow/language.md`, a seed file for the target repo's approved local language
 
 The generated wrappers call a local bootstrap launcher that executes a runtime copy installed under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
@@ -51,9 +51,10 @@ The generated wrappers call a local bootstrap launcher that executes a runtime c
 
 ## Usage
 
-- In Codex, invoke `$krow ...`
-- In Claude Code, invoke `/krow ...`
-- In Gemini CLI, invoke `/krow ...`
+- In Codex, invoke `$work ...`
+- In Claude Code, invoke `/work ...`
+- In Gemini CLI, invoke `/work ...`
+- For direct npm execution, run `npx krow-cli start "..."`, not `npx krow start "..."`.
 
 In Codex, `$language-map ...` runs a focused mapping workflow: it describes the requested codebase scope in the project's approved local language and reports missing canonical terms, naming drift, and glossary gaps. It uses the same krow runtime underneath; uncertain terms stay in the task packet/result, and only durable approved terms should be promoted to `.krow/language.md`.
 
