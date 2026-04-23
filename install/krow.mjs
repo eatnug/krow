@@ -229,6 +229,47 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
+const CODEX_LANGUAGE_MAP_SKILL = `---
+name: language-map
+description: Map the current codebase or requested scope into the project's approved local language, then report missing glossary terms, naming drift, and language gaps. Use only when the user explicitly invokes \`$language-map\` or asks to map/sync/describe code in the project language.
+---
+
+<!-- ${MANAGED_MARKER} -->
+
+# Language Map
+
+Describe the target codebase or requested scope using the project's approved local language.
+
+## Startup
+
+If $ARGUMENTS is empty, map from the repository's likely app entrypoints and major module surfaces.
+
+First read \`.krow/language.md\` if it exists.
+
+Build this normalized request:
+
+\`\`\`text
+Map the requested codebase or scope into the approved project-local language.
+
+Scope:
+<ARGUMENTS, or repository entrypoints and major module surfaces if empty>
+
+Acceptance criteria:
+- Read .krow/language.md first when it exists.
+- Inspect concrete code evidence before naming a term, module role, or flow.
+- Describe the codebase in controlled project-language sentences grouped by flow or module chunk.
+- Identify language gaps: missing canonical terms, duplicate names for the same concept, one name used for conflicting concepts, important flows not represented in .krow/language.md, and local architecture patterns worth naming.
+- Do not bulk-fill .krow/language.md.
+- Add to .krow/language.md only durable, evidence-backed terms that are clearly reusable.
+- Keep uncertain proposals and drift findings in the task packet/result instead of promoting them.
+- Do not make unrelated code changes.
+\`\`\`
+
+Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<normalized request>"\`
+
+Then continue using the same Loop and Rules from the installed \`$krow\` skill. If those instructions are not already in context, read \`.codex/skills/krow/SKILL.md\` and follow its Loop section exactly.
+`;
+
 const CLAUDE_KROW_COMMAND = `---
 description: Run actionable engineering work through the krow harness.
 argument-hint: "<request>"
@@ -540,6 +581,11 @@ export async function runInit({ force, global: isGlobal, home }) {
       content: renderManagedContent(CODEX_WORK_SKILL, home),
     },
     {
+      label: "Codex $language-map skill",
+      path: path.join(home, ".codex", "skills", "language-map", "SKILL.md"),
+      content: renderManagedContent(CODEX_LANGUAGE_MAP_SKILL, home),
+    },
+    {
       label: "Claude Code /krow command",
       path: path.join(home, ".claude", "commands", "krow.md"),
       content: renderManagedContent(CLAUDE_KROW_COMMAND, home),
@@ -590,6 +636,10 @@ export async function runRemove({ global: isGlobal, home }) {
     {
       label: "Codex $work skill",
       path: path.join(home, ".codex", "skills", "work", "SKILL.md"),
+    },
+    {
+      label: "Codex $language-map skill",
+      path: path.join(home, ".codex", "skills", "language-map", "SKILL.md"),
     },
     {
       label: "Claude Code /krow command",

@@ -20,6 +20,7 @@ The published package name is `krow-cli`. The installed command remains `krow`.
 That installs:
 - Codex `$krow`
 - Codex `$work`
+- Codex `$language-map`
 - Claude Code `/krow`
 - Gemini CLI `/krow`
 - `.krow/language.md`, a seed file for the target repo's approved local language
@@ -53,6 +54,8 @@ The generated wrappers call a local bootstrap launcher that executes a runtime c
 - In Codex, invoke `$krow ...`
 - In Claude Code, invoke `/krow ...`
 - In Gemini CLI, invoke `/krow ...`
+
+In Codex, `$language-map ...` runs a focused mapping workflow: it describes the requested codebase scope in the project's approved local language and reports missing canonical terms, naming drift, and glossary gaps. It uses the same krow runtime underneath; uncertain terms stay in the task packet/result, and only durable approved terms should be promoted to `.krow/language.md`.
 
 The installed wrappers are thin host adapters over the same local control surface:
 - `route`: classify a message as chat or work without creating workflow state
