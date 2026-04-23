@@ -3,6 +3,7 @@ import path from "node:path";
 import type {
   ClarifyOutput,
   ExecuteOutput,
+  LanguageGrounding,
   RuntimePhase,
   VerifyOutput,
   WorkflowState,
@@ -79,6 +80,50 @@ function markdownList(items: string[], empty = "(none)"): string[] {
   return items.map((item) => `- ${item}`);
 }
 
+function asLanguageGrounding(value: unknown): LanguageGrounding | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as LanguageGrounding;
+}
+
+function formatLanguageGrounding(value: unknown): string[] {
+  const grounding = asLanguageGrounding(value);
+  if (!grounding) {
+    return ["- (none)"];
+  }
+
+  const lines = [
+    `- Language ref: ${grounding.summary.languageRef}`,
+    `- Vocabulary status: ${grounding.summary.vocabularyStatus}`,
+    `- Requires clarification: ${grounding.summary.requiresClarification ? "yes" : "no"}`,
+    `- Matched terms: ${grounding.summary.matchedTermCount}`,
+    `- Proposed terms: ${grounding.summary.proposedTermCount}`,
+    `- Unresolved relations: ${grounding.summary.unresolvedRelationCount}`,
+    "",
+    "### Matched Terms",
+    ...markdownList(
+      grounding.matchedTerms.map((term) => `${term.id} (${term.namespace}) = ${term.canonical} [matched: ${term.matchedText}]`),
+    ),
+    "",
+    "### Proposed Terms",
+    ...markdownList(grounding.proposedTerms.map((term) => `${term.id} = ${term.canonical}`)),
+    "",
+    "### Statements",
+    ...markdownList(
+      grounding.statements.map(
+        (statement) =>
+          `${statement.subject} ${statement.relation} ${statement.object} [${statement.status}, ${statement.confidence}]`,
+      ),
+    ),
+    "",
+    "### Language Questions",
+    ...markdownList(grounding.questions),
+  ];
+
+  return lines;
+}
+
 function formatUnitRuntimeStatus(state: WorkflowState, unit: WorkflowUnit): string {
   if (completedUnitIds(state).includes(unit.id)) {
     return "completed";
@@ -147,6 +192,9 @@ function buildUnitBrief(state: WorkflowState, unit: WorkflowUnit): string {
     "## Request",
     unit.request ?? state.description,
     "",
+    "## Language Grounding",
+    ...formatLanguageGrounding(unit.languageGrounding),
+    "",
     "## Scope",
     ...markdownList(unit.scope ?? []),
     "",
@@ -176,7 +224,11 @@ function buildUnitContext(state: WorkflowState, unit: WorkflowUnit, rootDir = pr
     `- Ref: ${languagePath}`,
     `- Status: ${languageExists ? "present" : "missing"}`,
     "- Use: read this file when wording, domain terms, module names, or local architectural language matter.",
+    "- Rule: treat this as controlled vocabulary plus evidence, not a layer-by-layer translation map.",
     "- Rule: keep temporary language proposals in this task packet; only promote durable approved terms to the project language file.",
+    "",
+    "## Grounding Snapshot",
+    ...formatLanguageGrounding(unit.languageGrounding),
     "",
     "## Anchors",
     `- Files: ${(unit.anchors?.filePaths ?? []).join(", ") || "(none)"}`,

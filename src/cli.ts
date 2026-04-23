@@ -22,11 +22,13 @@ import {
   workflowTaskIndexPath,
   workflowTaskRootPath,
 } from "./state-store.js";
+import { groundRequestLanguage } from "./language-grounding.js";
 import type {
   CapabilityIntent,
   CapabilityKind,
   CapabilityPolicy,
   IntakePlan,
+  LanguageGrounding,
   LocalControlCommandName,
   RequestAnchors,
   RouteConfidence,
@@ -112,6 +114,12 @@ const proseSymbolStopWords = new Set([
   "Expected",
   "Fix",
   "Focus",
+  "AI",
+  "UI",
+  "UX",
+  "TestFlight",
+  "Android",
+  "iOS",
   "Implement",
   "Remove",
   "Rename",
@@ -586,6 +594,7 @@ function buildSingleUnit(
   anchors: RequestAnchors,
   intents: CapabilityIntent[],
   notes: string[],
+  languageGrounding?: LanguageGrounding,
 ): WorkflowUnit {
   const scopedPaths = unique(anchors.filePaths.map(scopeKeyForFilePath));
   return enrichUnit({
@@ -600,6 +609,7 @@ function buildSingleUnit(
     anchors,
     intakeIntents: intents,
     intakeNotes: notes,
+    languageGrounding,
   }, objective, anchors, "single");
 }
 
@@ -608,6 +618,7 @@ function buildIntegrationUnit(
   index: number,
   priorUnits: WorkflowUnit[],
   graphNotes: string[],
+  languageGrounding?: LanguageGrounding,
 ): WorkflowUnit {
   return enrichUnit({
     id: makeUnitId(index),
@@ -619,6 +630,7 @@ function buildIntegrationUnit(
     parallelizable: false,
     ownership: unique(priorUnits.flatMap((unit) => unit.ownership ?? [])),
     intakeNotes: graphNotes,
+    languageGrounding,
     verifyFocus: [
       "Cross-unit interfaces still align after all ready units complete.",
       "The final user-facing result matches the original objective, not just each isolated slice.",
@@ -639,6 +651,7 @@ function carveWorkflowUnits(
   anchors: RequestAnchors,
   intents: CapabilityIntent[],
   notes: string[],
+  languageGrounding?: LanguageGrounding,
 ): { proposedUnits: WorkflowUnit[]; graphStrategy: WorkflowGraphStrategy; graphNotes: string[] } {
   const deliverables = explicitDeliverables(route.normalizedMessage);
   if (deliverables) {
@@ -662,11 +675,12 @@ function carveWorkflowUnits(
         anchors: itemAnchors,
         intakeIntents: intents,
         intakeNotes: [...notes, ...graphNotes],
+        languageGrounding,
       } satisfies WorkflowUnit, item, itemAnchors, deliverables.ordered ? "serial" : "parallel_fanout");
     });
 
     const proposedUnits = !deliverables.ordered
-      ? [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes)]
+      ? [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes, languageGrounding)]
       : units;
 
     return {
@@ -706,6 +720,7 @@ function carveWorkflowUnits(
           },
           intakeIntents: intents,
           intakeNotes: [...notes, ...graphNotes],
+          languageGrounding,
         },
         objective,
         {
@@ -718,55 +733,14 @@ function carveWorkflowUnits(
     );
 
     return {
-      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes)],
-      graphStrategy: "parallel_fanout",
-      graphNotes,
-    };
-  }
-
-  if (anchors.symbols.length >= 2 && anchors.filePaths.length === 0) {
-    const graphNotes = [
-      "carved from multiple explicit symbol targets without concrete file paths",
-      "each root unit should map its symbol to code before execution and fan into one integration pass",
-    ];
-    const units = anchors.symbols.map((symbol, index) =>
-      enrichUnit(
-        {
-          id: makeUnitId(index + 1),
-          title: normalizeTitle(`${symbol}: ${objective}`),
-          kind: "work",
-          request: `${objective}\n\nFocus this unit on the ${symbol} surface.`,
-          scope: [symbol],
-          dependsOn: [],
-          parallelizable: true,
-          ownership: [symbol],
-          anchors: {
-            ...anchors,
-            filePaths: [],
-            symbols: [symbol],
-          },
-          intakeIntents: intents,
-          intakeNotes: [...notes, ...graphNotes],
-        },
-        objective,
-        {
-          ...anchors,
-          filePaths: [],
-          symbols: [symbol],
-        },
-        "parallel_fanout",
-      ),
-    );
-
-    return {
-      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes)],
+      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes, languageGrounding)],
       graphStrategy: "parallel_fanout",
       graphNotes,
     };
   }
 
   return {
-    proposedUnits: [buildSingleUnit(route, objective, anchors, intents, notes)],
+    proposedUnits: [buildSingleUnit(route, objective, anchors, intents, notes, languageGrounding)],
     graphStrategy: "single",
     graphNotes: ["request stayed as one bounded workflow unit"],
   };
@@ -794,9 +768,10 @@ function looksLikeRemoval(objective: string): boolean {
   return /\b(remove|delete)\b/i.test(objective) || /(삭제|지워)/.test(objective);
 }
 
-function buildIntakePlan(route: RouteDecision): IntakePlan {
+function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakePlan {
   const objective = summarizeObjective(route.normalizedMessage);
   const anchors = extractAnchors(route.normalizedMessage);
+  const languageGrounding = route.kind === "work" ? groundRequestLanguage(route.normalizedMessage, rootDir) : undefined;
   const intents: CapabilityIntent[] = [];
   const notes: string[] = [];
   const missingEvidence: string[] = [];
@@ -816,6 +791,22 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
       needsUserInput: false,
       notes: ["request was routed to chat mode"],
     };
+  }
+
+  if (languageGrounding) {
+    notes.push(...languageGrounding.notes);
+    maybeAdd(intents, {
+      kind: "inspect_docs",
+      priority: "high",
+      reason: "ground the request in the approved project language before implementation",
+      targets: [languageGrounding.summary.languageRef],
+    });
+
+    if (languageGrounding.summary.requiresClarification) {
+      questions.push(...languageGrounding.questions);
+      missingEvidence.push("language grounding confirmation");
+      notes.push("resolve proposed or unresolved vocabulary before execution changes project files");
+    }
   }
 
   maybeAdd(intents, {
@@ -909,19 +900,20 @@ function buildIntakePlan(route: RouteDecision): IntakePlan {
     notes.push("do not guess missing requirements; gather evidence from code, research, or user answers first");
   }
 
-  const carved = carveWorkflowUnits(route, objective, anchors, intents, notes);
+  const carved = carveWorkflowUnits(route, objective, anchors, intents, notes, languageGrounding);
 
   return {
     objective,
     anchors,
+    languageGrounding,
     intents,
     proposedUnits: carved.proposedUnits,
     graphStrategy: carved.graphStrategy,
     graphNotes: carved.graphNotes,
-    missingEvidence,
-    questions,
+    missingEvidence: unique(missingEvidence),
+    questions: unique(questions),
     needsUserInput: questions.length > 0,
-    notes,
+    notes: unique(notes),
   };
 }
 
@@ -1102,12 +1094,13 @@ function startFromMessage(input: {
   allowHeuristics?: boolean;
   captureEnabled?: boolean;
   maxVerifyAttempts?: number;
+  rootDir?: string;
 }): StartFromMessageResult {
   const route = routeRequest(input.message, {
     explicitIntent: input.explicitIntent,
     allowHeuristics: input.allowHeuristics ?? false,
   });
-  const intake = buildIntakePlan(route);
+  const intake = buildIntakePlan(route, input.rootDir);
   const entryPolicy = resolveEntryPolicy(route);
 
   if (route.kind !== "work" || intake.needsUserInput) {
@@ -1205,6 +1198,7 @@ function handleIntake(args: string[], flags: FlagMap): void {
     message,
     explicitIntent: parseIntentFlag(flags),
     allowHeuristics: flags["allow-heuristics"] === true,
+    rootDir: rootDir(flags),
   });
 
   outputJSON({
@@ -1224,6 +1218,7 @@ function handleStart(args: string[], flags: FlagMap): void {
     allowHeuristics: flags["allow-heuristics"] === true,
     captureEnabled: flags.capture === true,
     mode: typeof flags.mode === "string" ? flags.mode : undefined,
+    rootDir: rootDir(flags),
   });
 
   if (result.state) {

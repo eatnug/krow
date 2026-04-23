@@ -443,9 +443,56 @@ export interface RequestAnchors {
   tickets: string[];
 }
 
+export type LanguageNamespace = "core" | "tech" | "project";
+
+export type LanguageTermStatus = "approved" | "proposed" | "unresolved";
+
+export interface LanguageTerm {
+  id: string;
+  namespace: LanguageNamespace;
+  canonical: string;
+  aliases: string[];
+  status: LanguageTermStatus;
+  source: "builtin" | "language_file" | "request";
+  evidence?: string[];
+}
+
+export interface LanguageTermMatch extends LanguageTerm {
+  matchedText: string;
+}
+
+export interface LanguageStatement {
+  subject: string;
+  relation: string;
+  object: string;
+  status: "grounded" | "proposed" | "unresolved";
+  confidence: RouteConfidence;
+  sourceText: string;
+}
+
+export interface LanguageGroundingSummary {
+  languageRef: string;
+  vocabularyStatus: "missing" | "seed" | "custom";
+  approvedTermCount: number;
+  matchedTermCount: number;
+  proposedTermCount: number;
+  unresolvedRelationCount: number;
+  requiresClarification: boolean;
+}
+
+export interface LanguageGrounding {
+  summary: LanguageGroundingSummary;
+  matchedTerms: LanguageTermMatch[];
+  proposedTerms: LanguageTerm[];
+  statements: LanguageStatement[];
+  notes: string[];
+  questions: string[];
+}
+
 export interface IntakePlan {
   objective: string;
   anchors: RequestAnchors;
+  languageGrounding?: LanguageGrounding;
   intents: CapabilityIntent[];
   proposedUnits: WorkflowUnit[];
   graphStrategy: WorkflowGraphStrategy;

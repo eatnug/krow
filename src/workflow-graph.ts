@@ -79,6 +79,10 @@ function compactUnit(unit: WorkflowUnit): Record<string, unknown> {
     mergeRequired: unit.mergeRequired === true,
     sharedRisks: Array.isArray(unit.sharedRisks) ? unit.sharedRisks : [],
     acceptanceCriteria: Array.isArray(unit.acceptanceCriteria) ? unit.acceptanceCriteria : [],
+    languageGrounding:
+      unit.languageGrounding && typeof unit.languageGrounding === "object"
+        ? (unit.languageGrounding as Record<string, unknown>).summary
+        : undefined,
   };
 }
 

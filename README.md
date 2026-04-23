@@ -23,11 +23,11 @@ That installs:
 - Codex `$language-map`
 - Claude Code `/work`
 - Gemini CLI `/work`
-- `.krow/language.md`, a seed file for the target repo's approved local language
+- `.krow/language.md`, a seed file for the target repo's controlled vocabulary and grounding evidence
 
 The generated wrappers call a local bootstrap launcher that executes a runtime copy installed under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
 
-`init` only creates `.krow/language.md` when it is missing. Once a project starts filling this file with canonical terms, module names, or domain wording, later `init` runs leave it untouched.
+`init` creates `.krow/language.md` when it is missing and upgrades the old placeholder seed. Once a project starts filling this file with canonical terms, module names, or domain wording, later `init` runs leave it untouched.
 
 ## Core stance
 
@@ -58,6 +58,13 @@ The generated wrappers call a local bootstrap launcher that executes a runtime c
 
 In Codex, `$language-map ...` runs a focused mapping workflow: it describes the requested codebase scope in the project's approved local language and reports missing canonical terms, naming drift, and glossary gaps. It uses the same krow runtime underneath; uncertain terms stay in the task packet/result, and only durable approved terms should be promoted to `.krow/language.md`.
 
+krow treats language as grounding, not as a forced layer-by-layer translation map:
+- core terms name general software concepts like `Module`, `Service`, `State`, `Workflow`, `Config`, `Runtime`, `Permission`, `Test`, and `Release`
+- tech terms name stack-specific concepts like `React`, `Rust`, `FastAPI`, `Postgres`, `npm`, `Cargo`, `TestFlight`, or `Android`
+- project terms name the product/domain concepts for the current repository
+
+During `intake`, krow reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, detects unresolved software relations, and includes a `languageGrounding` block in the JSON response. Broad work should resolve those grounding questions before implementation starts.
+
 The installed wrappers are thin host adapters over the same local control surface:
 - `route`: classify a message as chat or work without creating workflow state
 - `intake`: extract anchors, missing evidence, bundled clarification questions, and a proposed unit graph
@@ -77,7 +84,7 @@ The wrappers use `intake --intent work` first so agents gather evidence, bundled
 - task packets under `.krow/tasks/<workflowId>/`
 - relay and baton files under `.krow/relays/<workflowId>/`
 
-Each task context also includes a `Project Language` section that points to `.krow/language.md`. Workers should read it when wording, domain terms, module names, or local architectural language matter. Temporary language proposals belong in the task packet; only durable approved terms should be promoted to `.krow/language.md`.
+Each task context also includes a `Project Language` section that points to `.krow/language.md` and a `Grounding Snapshot` copied from intake. Workers should read it when wording, domain terms, module names, or local architectural language matter. Temporary language proposals belong in the task packet; only durable approved terms should be promoted to `.krow/language.md`.
 
 When a phase or decision payload contains apostrophes, do not pass it as a single shell-quoted argument. `submit-phase` and `submit-decisions` accept `-` to read JSON from stdin, so prefer a heredoc:
 

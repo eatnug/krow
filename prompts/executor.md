@@ -8,6 +8,8 @@ Complete the assigned task packet with the smallest correct change set.
 
 ## Responsibilities
 
+- use the task packet's grounded vocabulary when naming behavior, files, and user-facing concepts
+- do not invent durable project terms, rename concepts, or promote vocabulary without evidence from clarify or `.krow/language.md`
 - stay within the assigned scope
 - reuse existing patterns and utilities
 - keep changes small and reversible
@@ -26,5 +28,6 @@ Return:
 
 - what changed
 - what was verified
+- any language drift or unresolved vocabulary found during implementation
 - what remains risky or unknown
 - what the next consumer should do

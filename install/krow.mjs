@@ -11,9 +11,60 @@ const BOOTSTRAP_RELATIVE_PATH = [".krow", "bin", "krow-bootstrap.mjs"];
 const RUNTIME_DIST_RELATIVE_PATH = [".krow", "runtime", "dist"];
 const PROJECT_LANGUAGE_RELATIVE_PATH = [".krow", "language.md"];
 
+const OLD_PROJECT_LANGUAGE = `# Project Language
+
+This file defines the approved local language for this codebase.
+`;
+
 const PROJECT_LANGUAGE = `# Project Language
 
 This file defines the approved local language for this codebase.
+
+krow treats this as controlled vocabulary plus grounding evidence, not as a
+layer-by-layer translation map. Core terms name general software concepts, tech
+terms name stack-specific concepts, and project terms name this product's domain
+language.
+
+## Grounding Rules
+
+- Use approved terms when they exist.
+- Keep proposed terms in task packets until they are durable and evidence-backed.
+- Do not translate every core term into a project term.
+- Add tech bindings only when implementation evidence exists.
+- Record deprecated words so agents can avoid naming drift.
+
+## Core Software Terms
+
+Core/software terms are built into krow. Add rows here only when this repository
+has a durable local convention for a general software concept.
+
+| ID | Term | Aliases | Evidence |
+|----|------|---------|----------|
+
+## Tech Terms
+
+Use this section for stack, framework, runtime, deployment, or tooling terms that
+matter to implementation.
+
+| ID | Term | Aliases | Evidence |
+|----|------|---------|----------|
+
+## Project Terms
+
+Use this section for product/domain terms that should stay stable across specs,
+code review, commits, and task packets.
+
+| ID | Term | Aliases | Evidence |
+|----|------|---------|----------|
+
+## Deprecated Terms
+
+| Term | Use Instead | Reason |
+|------|-------------|--------|
+
+## Open Language Questions
+
+- (none)
 `;
 
 const KROW_BOOTSTRAP = `#!/usr/bin/env node
@@ -90,6 +141,8 @@ If $ARGUMENTS is empty, ask the user what they want to do first.
 
 Parse the JSON response.
 
+Read \`intake.languageGrounding\` when present. Treat grounding questions as part of the bundled gate; do not start execution while durable project terms or term relationships are still proposed or unresolved.
+
 If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
 - Ask the user for the full bundled question set in one message.
 - When the user answers, fold the original request plus their answers into one refined request.
@@ -150,7 +203,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
-- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
+- \`.krow/language.md\` is controlled vocabulary plus grounding evidence for the target codebase. It is not a layer-by-layer translation map. Read it when wording, domain terms, module names, or local architectural language matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
 const CODEX_LANGUAGE_MAP_SKILL = `---
@@ -187,8 +240,9 @@ Scope:
 Acceptance criteria:
 - Read .krow/language.md first when it exists.
 - Inspect concrete code evidence before naming a term, module role, or flow.
-- Describe the codebase in controlled project-language sentences grouped by flow or module chunk.
+- Describe the codebase in controlled vocabulary statements grouped by flow or module chunk.
 - Identify language gaps: missing canonical terms, duplicate names for the same concept, one name used for conflicting concepts, important flows not represented in .krow/language.md, and local architecture patterns worth naming.
+- Keep core/software terms, tech terms, and project terms separate; do not create a layer-by-layer mapping table.
 - Do not bulk-fill .krow/language.md.
 - Add to .krow/language.md only durable, evidence-backed terms that are clearly reusable.
 - Keep uncertain proposals and drift findings in the task packet/result instead of promoting them.
@@ -227,6 +281,8 @@ If no request was supplied, ask the user what they want to do first.
 Otherwise, run: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "$request"\`
 
 Parse the JSON response.
+
+Read \`intake.languageGrounding\` when present. Treat grounding questions as part of the bundled gate; do not start execution while durable project terms or term relationships are still proposed or unresolved.
 
 If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
 - Ask the user for the full bundled question set in one message.
@@ -288,7 +344,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
-- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
+- \`.krow/language.md\` is controlled vocabulary plus grounding evidence for the target codebase. It is not a layer-by-layer translation map. Read it when wording, domain terms, module names, or local architectural language matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
 const GEMINI_WORK_COMMAND = `# ${MANAGED_MARKER}
@@ -311,6 +367,8 @@ If no arguments were supplied, ask the user what they want to do first.
 Otherwise, run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "{{args}}"\`
 
 Parse the JSON response.
+
+Read \`intake.languageGrounding\` when present. Treat grounding questions as part of the bundled gate; do not start execution while durable project terms or term relationships are still proposed or unresolved.
 
 If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
 - Ask the user for the full bundled question set in one message.
@@ -369,7 +427,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
 - State lives under \`.krow/state/workflows/<workflowId>.json\`. Task packets live under \`.krow/tasks/<workflowId>/\` and relays live under \`.krow/relays/<workflowId>/\`. Read the referenced files instead of guessing.
-- \`.krow/language.md\` is the approved local language for the target codebase. Read it when wording, domain terms, or module names matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
+- \`.krow/language.md\` is controlled vocabulary plus grounding evidence for the target codebase. It is not a layer-by-layer translation map. Read it when wording, domain terms, module names, or local architectural language matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 """
 `;
 
@@ -450,7 +508,14 @@ async function writeSeedFile(targetPath, content) {
 
   if (exists) {
     const existing = await fs.readFile(targetPath, "utf8");
-    return existing === content ? "unchanged" : "skipped (already exists)";
+    if (existing === content) {
+      return "unchanged";
+    }
+    if (existing.trim() === OLD_PROJECT_LANGUAGE.trim()) {
+      await fs.writeFile(targetPath, content, "utf8");
+      return "updated (seed format)";
+    }
+    return "skipped (already exists)";
   }
 
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
@@ -473,6 +538,7 @@ async function installRuntime(packageRoot, home) {
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.cp(sourceDir, targetDir, { recursive: true });
+  await fs.writeFile(path.join(targetDir, "package.json"), `${JSON.stringify({ type: "module" }, null, 2)}\n`, "utf8");
   return {
     label: "krow runtime",
     path: targetDir,
