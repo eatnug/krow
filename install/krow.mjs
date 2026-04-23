@@ -84,7 +84,7 @@ const result = spawnSync(process.execPath, [runtimeCliPath, ...process.argv.slic
 
 if (result.error && result.error.code === "ENOENT") {
   process.stderr.write(
-    "krow runtime is missing. Re-run 'npx krow-cli init --force' to refresh the local install.\\n",
+    "krow runtime is missing. Re-run 'npx --yes krow-cli@latest init --force' to refresh the local install.\\n",
   );
   process.exit(1);
 }

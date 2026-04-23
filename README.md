@@ -12,11 +12,11 @@ It packages three things:
 From npm:
 
 ```bash
-npx krow-cli init
+npx --yes krow-cli@latest init
 ```
 
 The published package name is `krow-cli`. The installed command remains `krow`.
-Use `npx krow-cli <command>` for one-off npm execution; `npx krow <command>` resolves a different npm package and cannot run the CLI.
+Use `npx --yes krow-cli@latest <command>` for one-off npm execution; `npx krow <command>` resolves a different npm package and cannot run the CLI.
 
 That installs:
 - Codex `$work`
@@ -54,7 +54,7 @@ The generated wrappers call a local bootstrap launcher that executes a runtime c
 - In Codex, invoke `$work ...`
 - In Claude Code, invoke `/work ...`
 - In Gemini CLI, invoke `/work ...`
-- For direct npm execution, run `npx krow-cli start "..."`, not `npx krow start "..."`.
+- For direct npm execution, run `npx --yes krow-cli@latest start "..."`, not `npx krow start "..."`.
 
 In Codex, `$language-map ...` runs a focused mapping workflow: it describes the requested codebase scope in the project's approved local language and reports missing canonical terms, naming drift, and glossary gaps. It uses the same krow runtime underneath; uncertain terms stay in the task packet/result, and only durable approved terms should be promoted to `.krow/language.md`.
 
