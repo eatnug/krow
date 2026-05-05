@@ -145,6 +145,8 @@ export function buildRunContext(state: WorkflowState): Record<string, unknown> {
     dependencyRelayRefs: currentUnit
       ? unitDependencies(currentUnit).map((dependencyId) => unitRelayPath(state.workflowId, dependencyId))
       : [],
+    decisionHistory: state.decisionHistory,
+    pendingDecisions: state.pendingDecisions,
     pendingUnitIds: pending.map((unit) => unit.id),
     remainingUnitCount: pending.length,
   };

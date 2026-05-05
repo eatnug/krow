@@ -1,97 +1,141 @@
 # krow
 
-`krow` is a host-agnostic agent harness for coding work.
+`krow` is a host-agnostic workflow harness for coding agents.
 
-It packages three things:
-- a lean execution contract
-- a runtime-agnostic state and signal model
-- host wrappers that expose explicit `work` entrypoints without polluting the core prompts
+It gives Codex, Claude Code, and Gemini CLI the same durable work loop:
+
+- start from one explicit work entrypoint
+- gather evidence before changing code
+- bundle clarification instead of asking one question at a time
+- persist workflow state, task packets, and handoff files on disk
+- move every unit through `clarify -> execute -> verify -> capture`
+
+## Why krow
+
+Most agent failures are orchestration failures, not model failures.
+
+`krow` keeps the runtime contract small and opinionated:
+
+- one worker owns one bounded task
+- ambiguous work should be clarified before broad execution
+- verification is required before claiming completion
+- the filesystem is shared memory for resume, relay, and auditability
+
+If you want your host prompts to stay lean while the workflow stays explicit, this is the layer.
+
+## What you get
+
+`krow init` installs host-facing wrappers and seeds repo-local workflow files.
+
+Today it installs:
+
+- Codex `$work`
+- Codex `$language-map`
+- Claude Code `/work`
+- Gemini CLI `/work`
+- `.krow/language.md` for project vocabulary and language grounding
+
+The published package name is `krow-cli`. The installed command remains `krow`.
+
+Do not run `npx krow ...`. That resolves a different npm package.
 
 ## Install
 
-From npm:
+Use npm:
 
 ```bash
 npx --yes krow-cli@latest init
 ```
 
-The published package name is `krow-cli`. The installed command remains `krow`.
-Use `npx --yes krow-cli@latest <command>` for one-off npm execution; `npx krow <command>` resolves a different npm package and cannot run the CLI.
+That creates local wrappers which call a bootstrap launcher under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
 
-That installs:
-- Codex `$work`
-- Codex `$language-map`
-- Claude Code `/work`
-- Gemini CLI `/work`
-- `.krow/language.md`, a seed file for the target repo's controlled vocabulary and grounding evidence
+`init` creates `.krow/language.md` when it is missing and upgrades the old placeholder seed. Once a repository starts using that file for durable vocabulary, later `init` runs leave it alone.
 
-The generated wrappers call a local bootstrap launcher that executes a runtime copy installed under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
+## Quick start
 
-`init` creates `.krow/language.md` when it is missing and upgrades the old placeholder seed. Once a project starts filling this file with canonical terms, module names, or domain wording, later `init` runs leave it untouched.
+1. Run `npx --yes krow-cli@latest init` inside the repository.
+2. Open your host and use its work entrypoint:
+   - Codex: `$work fix the failing release script`
+   - Claude Code: `/work fix the failing release script`
+   - Gemini CLI: `/work fix the failing release script`
+3. Let the host drive the returned signals until the workflow reaches `done`.
 
-## Core stance
+For direct CLI use:
 
-- model capability is already good enough for many engineering tasks
-- quality comes from orchestration, not prompt bloat
-- do not guess; gather evidence first
-- when clarification is needed, ask for the full current bundle at once
-- one worker owns one task with one clear output boundary
-- use the filesystem for baton passing, resume, and durable state
+```bash
+npx --yes krow-cli@latest start --intent work "fix the failing release script"
+```
 
-## Layout
+## How it works
 
-- `AGENTS.md`: always-loaded execution contract
-- `docs/`: non-runtime design docs and repo-local workflow skills
-- `docs/HARNESS.md`: full system blueprint
-- `docs/FOUNDATIONS.md`: philosophy and design lineage
-- `docs/skills/`: reusable workflow surfaces
-- `prompts/`: narrow role prompts
-- `schemas/`: payload, signal, and state schemas
-- `install/`: host wrapper installer
+The installed wrappers are thin adapters over the same local control surface:
 
-## Usage
-
-- In Codex, invoke `$work ...`
-- In Claude Code, invoke `/work ...`
-- In Gemini CLI, invoke `/work ...`
-- For direct npm execution, run `npx --yes krow-cli@latest start "..."`, not `npx krow start "..."`.
-
-In Codex, `$language-map ...` runs a focused mapping workflow: it describes the requested codebase scope in the project's approved local language and reports missing canonical terms, naming drift, and glossary gaps. It uses the same krow runtime underneath; uncertain terms stay in the task packet/result, and only durable approved terms should be promoted to `.krow/language.md`.
-
-krow treats language as grounding, not as a forced layer-by-layer translation map:
-- core terms name general software concepts like `Module`, `Service`, `State`, `Workflow`, `Config`, `Runtime`, `Permission`, `Test`, and `Release`
-- tech terms name stack-specific concepts like `React`, `Rust`, `FastAPI`, `Postgres`, `npm`, `Cargo`, `TestFlight`, or `Android`
-- project terms name the product/domain concepts for the current repository
-
-During `intake`, krow reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, detects unresolved software relations, and includes a `languageGrounding` block in the JSON response. Broad work should resolve those grounding questions before implementation starts.
-
-The installed wrappers are thin host adapters over the same local control surface:
 - `route`: classify a message as chat or work without creating workflow state
-- `intake`: extract anchors, missing evidence, bundled clarification questions, and a proposed unit graph
-- `start`: create workflow state, carve ready units when strong split signals exist, and emit the first control signal
+- `intake`: extract anchors, missing evidence, clarification questions, and a proposed unit graph
+- `start`: persist workflow state immediately and emit the first `run` or `gate` signal
 - `status`, `next`, `resume`: inspect or continue persisted workflow state
 - `submit-phase`, `submit-decisions`, `stop`: advance or terminate local workflow state
 
 Runtime signals are explicit:
+
 - `run`: execute one bounded phase for one workflow unit
 - `gate`: stop for bundled external input only
 - `done`: terminal completed, blocked, or stopped state
 - `fault`: recoverable or unrecoverable runtime problem
 
-The wrappers use `intake --intent work` first so agents gather evidence, bundled questions, and a proposed unit graph before a workflow starts. After start, the runtime advances each unit through `clarify -> execute -> verify -> capture`, schedules the next ready unit from the dependency graph, and persists:
+`start --intent work` is the normal entrypoint. It reuses intake analysis internally, but it creates workflow state up front. If the request still needs clarification, `krow` emits a `gate` with an intent-lock plus a bundled decision set instead of forcing the host to restart the workflow from scratch.
 
-- workflow state under `.krow/state/workflows/<workflowId>.json`
-- task packets under `.krow/tasks/<workflowId>/`
-- relay and baton files under `.krow/relays/<workflowId>/`
+Workflow data is persisted under `.krow/`:
 
-Each task context also includes a `Project Language` section that points to `.krow/language.md` and a `Grounding Snapshot` copied from intake. Workers should read it when wording, domain terms, module names, or local architectural language matter. Temporary language proposals belong in the task packet; only durable approved terms should be promoted to `.krow/language.md`.
+- `.krow/state/workflows/<workflowId>.json`
+- `.krow/tasks/<workflowId>/`
+- `.krow/relays/<workflowId>/`
 
-When a phase or decision payload contains apostrophes, do not pass it as a single shell-quoted argument. `submit-phase` and `submit-decisions` accept `-` to read JSON from stdin, so prefer a heredoc:
+## Language grounding
+
+`krow` treats language as grounding, not as mandatory translation.
+
+It separates:
+
+- core terms: general software concepts like `Module`, `State`, `Workflow`, `Config`, `Permission`, `Test`
+- tech terms: stack-specific concepts like `React`, `Rust`, `FastAPI`, `Postgres`, `npm`
+- project terms: product or domain vocabulary specific to the repository
+
+During intake, `krow` reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, and records unresolved language gaps. Clarify should resolve those gaps from repository evidence first. Only durable approved terms should be promoted back into `.krow/language.md`.
+
+In Codex, `$language-map ...` runs a focused mapping workflow for this exact problem: it describes the requested codebase scope in the repository's approved language and reports glossary gaps, naming drift, and missing canonical terms.
+
+## Repository layout
+
+- `AGENTS.md`: always-loaded execution contract
+- `docs/HARNESS.md`: full system blueprint
+- `docs/FOUNDATIONS.md`: design rationale
+- `docs/skills/`: reusable workflow surfaces
+- `prompts/`: narrow role prompts
+- `schemas/`: payload, signal, and state schemas
+- `install/`: host wrapper installer
+
+## Development
 
 ```bash
-krow submit-phase <workflowId> clarify - <<'KROW_JSON'
-<JSON>
-KROW_JSON
+npm install
+npm run typecheck
+npm run build
 ```
 
-The current contract is still host-assisted. `krow` does not spawn teammates itself, but it now gives the host richer scheduling metadata, durable task packets, and stricter clarify/verify payload contracts so parallel-capable hosts can behave more predictably.
+`prepublishOnly` runs `npm run build`.
+
+## Publishing
+
+The npm package is published as `krow-cli`.
+
+Typical release flow:
+
+```bash
+npm version <patch|minor|major>
+npm publish
+```
+
+## License
+
+MIT

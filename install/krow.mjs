@@ -135,26 +135,16 @@ Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and
 
 ## Startup
 
-Run: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "$ARGUMENTS"\`
+Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "$ARGUMENTS"\`
 
 If $ARGUMENTS is empty, ask the user what they want to do first.
 
 Parse the JSON response.
 
-Read \`intake.languageGrounding\` when present. Treat grounding questions as part of the bundled gate; do not start execution while durable project terms or term relationships are still proposed or unresolved.
-
-If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
-- Ask the user for the full bundled question set in one message.
-- When the user answers, fold the original request plus their answers into one refined request.
-- Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<refined request>"\`
-
-If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "$ARGUMENTS"\`
-
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
-3. Otherwise, check the \`type\` field and act accordingly:
+2. Check the \`type\` field and act accordingly:
 
 ### type = "run"
 - Read \`state_ref\` before acting.
@@ -180,7 +170,7 @@ KROW_JSON
 \`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run:
+- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Then run:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
 <JSON>
@@ -278,24 +268,14 @@ Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and
 
 If no request was supplied, ask the user what they want to do first.
 
-Otherwise, run: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "$request"\`
+Otherwise, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "$request"\`
 
 Parse the JSON response.
-
-Read \`intake.languageGrounding\` when present. Treat grounding questions as part of the bundled gate; do not start execution while durable project terms or term relationships are still proposed or unresolved.
-
-If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
-- Ask the user for the full bundled question set in one message.
-- When the user answers, fold the original request plus their answers into one refined request.
-- Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<refined request>"\`
-
-If intake is not blocked, run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "$request"\`
 
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
-3. Otherwise, check the \`type\` field and act accordingly:
+2. Check the \`type\` field and act accordingly:
 
 ### type = "run"
 - Read \`state_ref\` before acting.
@@ -321,7 +301,7 @@ KROW_JSON
 \`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run:
+- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Then run:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
 <JSON>
@@ -364,24 +344,14 @@ Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and
 
 If no arguments were supplied, ask the user what they want to do first.
 
-Otherwise, run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} intake --intent work "{{args}}"\`
+Otherwise, run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "{{args}}"\`
 
 Parse the JSON response.
-
-Read \`intake.languageGrounding\` when present. Treat grounding questions as part of the bundled gate; do not start execution while durable project terms or term relationships are still proposed or unresolved.
-
-If \`blockedByQuestions\` is true or \`intake.questions\` is non-empty:
-- Ask the user for the full bundled question set in one message.
-- When the user answers, fold the original request plus their answers into one refined request.
-- Run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<refined request>"\`
-
-If intake is not blocked, run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "{{args}}"\`
 
 ## Loop
 
 1. Parse the JSON response from the last krow command.
-2. If the response is an intake result with \`blockedByQuestions\`, gather the bundled answers and rerun \`start --intent work\` with a refined request.
-3. Otherwise, check the \`type\` field and act accordingly:
+2. Check the \`type\` field and act accordingly:
 
 ### type = "run"
 - Read \`state_ref\` before acting.
@@ -404,7 +374,7 @@ KROW_JSON
 \`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": read \`state_ref\` and \`task_status_ref\`, present the bundled question set to the user in one message, collect the answers as one JSON object, then run via run_shell_command:
+- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Then run via run_shell_command:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
 <JSON>

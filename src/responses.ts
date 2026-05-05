@@ -71,6 +71,7 @@ export function buildClarifyGateSignal(state: WorkflowState): GateSignal {
     mode: state.mode,
     unit_id: unitId,
     options: state.pendingDecisions.map((decision) => decision.id),
+    decisions: state.pendingDecisions,
     state_ref: stateRef,
     workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
     task_status_ref: unitId ? unitStatusPath(state.workflowId, unitId) : undefined,

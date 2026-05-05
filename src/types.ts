@@ -276,6 +276,7 @@ export interface GateSignal {
   mode?: string;
   unit_id?: string;
   options: string[];
+  decisions?: DecisionPrompt[];
   state_ref: string;
   workflow_task_index_ref?: string;
   task_status_ref?: string;
@@ -489,10 +490,17 @@ export interface LanguageGrounding {
   questions: string[];
 }
 
+export interface IntakeIntentLock {
+  summary: string;
+  lines: string[];
+  confirmationPrompt: string;
+}
+
 export interface IntakePlan {
   objective: string;
   anchors: RequestAnchors;
   languageGrounding?: LanguageGrounding;
+  intentLock?: IntakeIntentLock;
   intents: CapabilityIntent[];
   proposedUnits: WorkflowUnit[];
   graphStrategy: WorkflowGraphStrategy;

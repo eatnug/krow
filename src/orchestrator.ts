@@ -297,6 +297,7 @@ export function nextSignal(state: WorkflowState): ControlSignal {
         mode: state.mode,
         unit_id: currentUnit(state)?.id,
         options: state.pendingDecisions.map((decision) => decision.id),
+        decisions: state.pendingDecisions,
         state_ref: workflowStatePath(state.workflowId),
         workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
         task_status_ref: currentUnit(state) ? unitStatusPath(state.workflowId, currentUnit(state)!.id) : undefined,
@@ -349,6 +350,24 @@ export function applyDecisionAnswers(state: WorkflowState, input: unknown): Comb
   if (!validation.ok || !validation.value) {
     return withResponse({
       signal: faultSignal(state, "invalid decision answers", validation.issues, true),
+    });
+  }
+
+  const requiredDecisionIds = state.pendingDecisions.map((decision) => decision.id);
+  const providedDecisionIds = validation.value.map((answer) => answer.decisionId);
+  const missingDecisionIds = requiredDecisionIds.filter((decisionId) => !providedDecisionIds.includes(decisionId));
+  const unknownDecisionIds = providedDecisionIds.filter((decisionId) => !requiredDecisionIds.includes(decisionId));
+
+  if (missingDecisionIds.length > 0 || unknownDecisionIds.length > 0) {
+    const issues: string[] = [];
+    if (missingDecisionIds.length > 0) {
+      issues.push(`missing bundled decisions: ${missingDecisionIds.join(", ")}`);
+    }
+    if (unknownDecisionIds.length > 0) {
+      issues.push(`unknown decisions submitted: ${unknownDecisionIds.join(", ")}`);
+    }
+    return withResponse({
+      signal: faultSignal(state, "decision answers did not match the pending bundled decisions", issues, true),
     });
   }
 

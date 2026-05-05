@@ -548,20 +548,21 @@ export function groundRequestLanguage(message: string, rootDir = process.cwd()):
   ];
 
   if (loaded.status !== "custom" && proposedTerms.length > 0) {
-    questions.push(
-      `The project language file is ${loaded.status}. Confirm the canonical project terms and aliases that should govern this request before implementation.`,
+    notes.push(
+      `project vocabulary file is ${loaded.status}; inspect repository docs and code evidence before promoting request-only terms`,
     );
-    notes.push("project vocabulary is not yet custom, so broad work should not invent durable project terms silently");
   }
 
   if (proposedTerms.length > 0) {
-    questions.push(
-      `Which proposed request terms should be approved project terms, aliases, or discarded? Proposed terms: ${formatTerms(proposedTerms)}.`,
+    notes.push(
+      `request introduced ungrounded terms: ${formatTerms(proposedTerms)}; keep them internal until clarify grounds them from repo evidence`,
     );
   }
 
   if (unresolvedRelationsRequireClarification) {
-    questions.push("Some software relations were detected without grounded subject/object terms; clarify the intended term relationship before execution.");
+    notes.push(
+      "some term relationships are unresolved; clarify them from repository evidence before asking the user",
+    );
   }
 
   return {

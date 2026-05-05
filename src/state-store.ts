@@ -250,6 +250,13 @@ function buildUnitContext(state: WorkflowState, unit: WorkflowUnit, rootDir = pr
       }),
     ),
     "",
+    "## Decision History",
+    ...markdownList(
+      state.decisionHistory.map((answer) =>
+        `${answer.decisionId} -> ${answer.selectedOptionId}${answer.customInput ? ` :: ${answer.customInput}` : ""}`,
+      ),
+    ),
+    "",
     "## Upstream Relays",
     ...markdownList(unitDependencies(unit).map((dependencyId) => unitRelayPath(state.workflowId, dependencyId))),
   ];
@@ -280,7 +287,18 @@ function buildUnitStatus(state: WorkflowState, unit: WorkflowUnit): string {
     ...markdownList(readySiblingIds),
     "",
     "## Pending Decisions",
-    ...markdownList(state.pendingDecisions.map((decision) => `${decision.id}: ${decision.question}`)),
+    ...markdownList(
+      state.pendingDecisions.map((decision) =>
+        `${decision.id}: ${decision.question}${decision.context ? ` :: ${decision.context}` : ""}`,
+      ),
+    ),
+    "",
+    "## Decision History",
+    ...markdownList(
+      state.decisionHistory.map((answer) =>
+        `${answer.decisionId} -> ${answer.selectedOptionId}${answer.customInput ? ` :: ${answer.customInput}` : ""}`,
+      ),
+    ),
   ];
 
   if (state.blockedReason) {

@@ -88,6 +88,9 @@ export function runSignalInstructions(
   const dependencyRelayRefs = Array.isArray(context?.dependencyRelayRefs)
     ? context.dependencyRelayRefs.filter((value): value is string => typeof value === "string")
     : [];
+  const decisionHistory = Array.isArray(context?.decisionHistory)
+    ? context.decisionHistory.filter((value) => typeof value === "object" && value !== null)
+    : [];
 
   if (graphStrategy) {
     lines.push(`Graph strategy: ${graphStrategy}.`);
@@ -107,6 +110,10 @@ export function runSignalInstructions(
 
   if (dependencyRelayRefs.length > 0) {
     lines.push(`Read upstream relay files first: ${dependencyRelayRefs.join(", ")}.`);
+  }
+
+  if (decisionHistory.length > 0) {
+    lines.push("Incorporate the recorded decision answers from the workflow context before asking for new input.");
   }
 
   if (readySiblingUnitIds.length > 0) {
@@ -129,7 +136,7 @@ export function runSignalInstructions(
 export function clarifyGateInstructions(workflowId: string, stateRef: string): string {
   return [
     `Workflow ${workflowId} is waiting for bundled clarification decisions.`,
-    `Read the current decision set from ${stateRef}.`,
+    `Read the attached decisions or the current decision set from ${stateRef}.`,
     `Collect all requested decisions from the user, then run: ${submitDecisionsCommand(workflowId)}`,
     "Replace the <JSON> heredoc line with the exact answers payload instead of quoting it inline.",
     `After submitting the answers, resume the workflow with: ${resumeCommand(workflowId)}`,

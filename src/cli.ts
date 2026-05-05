@@ -27,8 +27,11 @@ import type {
   CapabilityIntent,
   CapabilityKind,
   CapabilityPolicy,
+  DecisionPrompt,
   IntakePlan,
+  IntakeIntentLock,
   LanguageGrounding,
+  LanguageNamespace,
   LocalControlCommandName,
   RequestAnchors,
   RouteConfidence,
@@ -803,9 +806,9 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
     });
 
     if (languageGrounding.summary.requiresClarification) {
-      questions.push(...languageGrounding.questions);
-      missingEvidence.push("language grounding confirmation");
-      notes.push("resolve proposed or unresolved vocabulary before execution changes project files");
+      notes.push(
+        "resolve proposed or unresolved vocabulary during clarify from repository evidence; ask the user only when repository evidence conflicts or product behavior remains ambiguous",
+      );
     }
   }
 
@@ -900,19 +903,34 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
     notes.push("do not guess missing requirements; gather evidence from code, research, or user answers first");
   }
 
+  const baseQuestions = unique(questions);
   const carved = carveWorkflowUnits(route, objective, anchors, intents, notes, languageGrounding);
+  const intentLock = baseQuestions.length > 0
+    ? buildIntentLock(
+        objective,
+        anchors,
+        carved.proposedUnits,
+        carved.graphStrategy,
+        unique(missingEvidence),
+        languageGrounding,
+      )
+    : undefined;
+  const bundledQuestions = intentLock
+    ? [formatIntentLockBlock(intentLock), ...baseQuestions]
+    : baseQuestions;
 
   return {
     objective,
     anchors,
     languageGrounding,
+    intentLock,
     intents,
     proposedUnits: carved.proposedUnits,
     graphStrategy: carved.graphStrategy,
     graphNotes: carved.graphNotes,
     missingEvidence: unique(missingEvidence),
-    questions: unique(questions),
-    needsUserInput: questions.length > 0,
+    questions: bundledQuestions,
+    needsUserInput: bundledQuestions.length > 0,
     notes: unique(notes),
   };
 }
@@ -1087,6 +1105,197 @@ function normalizeTitle(objective: string): string {
   return compact.length <= 80 ? compact : `${compact.slice(0, 77)}...`;
 }
 
+function describeGraphStrategy(strategy: WorkflowGraphStrategy, units: WorkflowUnit[]): string {
+  switch (strategy) {
+    case "serial":
+      return `${units.length} ordered workflow units`;
+    case "parallel_fanout":
+      return `${Math.max(1, units.length - 1)} scoped units plus one final integration unit`;
+    case "single":
+    default:
+      return "one bounded workflow unit";
+  }
+}
+
+function summarizePlannedUnits(units: WorkflowUnit[]): string {
+  const titles = units
+    .slice(0, 3)
+    .map((unit) => unit.title.trim())
+    .filter(Boolean);
+  if (titles.length === 0) {
+    return "(not carved yet)";
+  }
+  const remainder = units.length - titles.length;
+  return remainder > 0 ? `${titles.join(" | ")} | +${remainder} more` : titles.join(" | ");
+}
+
+function summarizePlannedSurfaces(anchors: RequestAnchors, units: WorkflowUnit[]): string[] {
+  return unique([
+    ...anchors.filePaths.map(scopeKeyForFilePath),
+    ...units.flatMap((unit) => unit.ownership ?? []),
+    ...anchors.symbols,
+  ]).slice(0, 5);
+}
+
+function summarizeNamespaceTerms(
+  languageGrounding: LanguageGrounding | undefined,
+  namespace: LanguageNamespace,
+): string[] {
+  if (!languageGrounding) {
+    return [];
+  }
+
+  return unique(
+    languageGrounding.matchedTerms
+      .filter((term) => term.namespace === namespace)
+      .map((term) => term.canonical),
+  ).slice(0, 6);
+}
+
+function summarizeProposedTerms(languageGrounding: LanguageGrounding | undefined): string[] {
+  if (!languageGrounding) {
+    return [];
+  }
+
+  const matchedPhrases = unique(
+    languageGrounding.matchedTerms.flatMap((term) => [term.canonical, ...term.aliases]).map((term) => term.toLowerCase()),
+  );
+
+  return unique(
+    languageGrounding.proposedTerms
+      .map((term) => term.canonical)
+      .filter((term) => {
+        const tokens = term.split(/\s+/).filter(Boolean);
+        if (tokens.some((token) => token.length === 1)) {
+          return false;
+        }
+
+        const normalized = term.toLowerCase();
+        if (/[A-Za-z]/.test(term) && matchedPhrases.some((phrase) => normalized.includes(phrase))) {
+          return false;
+        }
+
+        return true;
+      }),
+  ).slice(0, 8);
+}
+
+function formatIntentLockBlock(intentLock: IntakeIntentLock): string {
+  return [
+    intentLock.confirmationPrompt,
+    "",
+    "Current understanding:",
+    ...intentLock.lines.map((line) => `- ${line}`),
+  ].join("\n");
+}
+
+function buildIntentLock(
+  objective: string,
+  anchors: RequestAnchors,
+  units: WorkflowUnit[],
+  graphStrategy: WorkflowGraphStrategy,
+  missingEvidence: string[],
+  languageGrounding?: LanguageGrounding,
+): IntakeIntentLock {
+  const surfaces = summarizePlannedSurfaces(anchors, units);
+  const verifySurface = unique([...anchors.tests, ...anchors.verificationSurfaces]).slice(0, 3);
+  const coreTerms = summarizeNamespaceTerms(languageGrounding, "core");
+  const techTerms = summarizeNamespaceTerms(languageGrounding, "tech");
+  const projectTerms = summarizeNamespaceTerms(languageGrounding, "project");
+  const unresolvedTerms = summarizeProposedTerms(languageGrounding);
+  const lines = [
+    `Objective: ${objective}`,
+    `Workflow shape: ${describeGraphStrategy(graphStrategy, units)}`,
+    `Planned units: ${summarizePlannedUnits(units)}`,
+  ];
+
+  if (surfaces.length > 0) {
+    lines.push(`Likely surfaces: ${surfaces.join(", ")}`);
+  }
+
+  if (verifySurface.length > 0) {
+    lines.push(`Current verify edge: ${verifySurface.join(", ")}`);
+  } else {
+    lines.push("Current verify edge: not locked yet");
+  }
+
+  if (coreTerms.length > 0) {
+    lines.push(`Grounded core terms: ${coreTerms.join(", ")}`);
+  }
+
+  if (techTerms.length > 0) {
+    lines.push(`Grounded tech terms: ${techTerms.join(", ")}`);
+  }
+
+  if (projectTerms.length > 0) {
+    lines.push(`Grounded project terms: ${projectTerms.join(", ")}`);
+  }
+
+  if (unresolvedTerms.length > 0) {
+    lines.push(`Request terms still needing repo grounding: ${unresolvedTerms.join(", ")}`);
+  }
+
+  if (missingEvidence.length > 0) {
+    lines.push(`Still need confirmation for: ${missingEvidence.join(", ")}`);
+  }
+
+  return {
+    summary: lines.join("\n"),
+    lines,
+    confirmationPrompt:
+      "Confirm or correct this current understanding before implementation. Rewrite the target in the project language if any part is wrong.",
+  };
+}
+
+function freeformDecisionPrompt(id: string, question: string, context?: string): DecisionPrompt {
+  return {
+    id,
+    question,
+    context,
+    options: [
+      {
+        id: "answer",
+        label: "Answer in free text",
+        description: "Reply with the exact correction or confirmation needed to continue.",
+      },
+    ],
+  };
+}
+
+function buildClarifyDecisionPrompts(intake: IntakePlan): DecisionPrompt[] {
+  const prompts: DecisionPrompt[] = [];
+
+  if (intake.intentLock) {
+    prompts.push(
+      freeformDecisionPrompt(
+        "intent-lock",
+        intake.intentLock.confirmationPrompt,
+        formatIntentLockBlock(intake.intentLock),
+      ),
+    );
+  }
+
+  const followUpQuestions = intake.intentLock ? intake.questions.slice(1) : intake.questions;
+  followUpQuestions.forEach((question, index) => {
+    prompts.push(
+      freeformDecisionPrompt(
+        `clarify-${index + 1}`,
+        question,
+        "Answer concretely and keep the wording aligned with the project language where possible.",
+      ),
+    );
+  });
+
+  return prompts;
+}
+
+function primeWorkflowWithClarifyGate(state: WorkflowState, intake: IntakePlan): void {
+  state.pendingDecisions = buildClarifyDecisionPrompts(intake);
+  state.status = "clarify_pending";
+  state.phase = "clarify";
+  state.updatedAt = new Date().toISOString();
+}
+
 function startFromMessage(input: {
   message: string;
   mode?: string;
@@ -1095,6 +1304,7 @@ function startFromMessage(input: {
   captureEnabled?: boolean;
   maxVerifyAttempts?: number;
   rootDir?: string;
+  createStateForQuestions?: boolean;
 }): StartFromMessageResult {
   const route = routeRequest(input.message, {
     explicitIntent: input.explicitIntent,
@@ -1103,7 +1313,7 @@ function startFromMessage(input: {
   const intake = buildIntakePlan(route, input.rootDir);
   const entryPolicy = resolveEntryPolicy(route);
 
-  if (route.kind !== "work" || intake.needsUserInput) {
+  if (route.kind !== "work") {
     return {
       route,
       intake,
@@ -1112,7 +1322,16 @@ function startFromMessage(input: {
     };
   }
 
-  const { state, signal } = createWorkflow({
+  if (intake.needsUserInput && !input.createStateForQuestions) {
+    return {
+      route,
+      intake,
+      entryPolicy,
+      blockedByQuestions: true,
+    };
+  }
+
+  const created = createWorkflow({
     mode: input.mode ?? "work",
     description: intake.objective,
     units: intake.proposedUnits,
@@ -1122,14 +1341,18 @@ function startFromMessage(input: {
     maxVerifyAttempts: input.maxVerifyAttempts ?? 3,
   });
 
+  if (intake.needsUserInput) {
+    primeWorkflowWithClarifyGate(created.state, intake);
+  }
+
   return {
     route,
     intake,
     entryPolicy,
-    phasePolicy: resolvePhasePolicy(state.phase),
-    state,
-    signal,
-    blockedByQuestions: false,
+    phasePolicy: resolvePhasePolicy(created.state.phase),
+    state: created.state,
+    signal: nextSignal(created.state),
+    blockedByQuestions: intake.needsUserInput,
   };
 }
 
@@ -1219,6 +1442,7 @@ function handleStart(args: string[], flags: FlagMap): void {
     captureEnabled: flags.capture === true,
     mode: typeof flags.mode === "string" ? flags.mode : undefined,
     rootDir: rootDir(flags),
+    createStateForQuestions: true,
   });
 
   if (result.state) {
