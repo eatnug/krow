@@ -2,7 +2,22 @@
 
 `krow` is a state-machine workflow harness for coding agents.
 
-It makes agent work more deterministic: requests enter through explicit control surfaces, move through a small set of named phases, emit machine-readable signals, and persist durable state on disk. It also treats repository language as a first-class input, so broad work is grounded in the project's own terms instead of whatever wording happened to appear in the prompt.
+It turns "please work on this repo" into an explicit workflow: classify the request, gather evidence, split bounded units, emit machine-readable run/gate/done signals, and persist state on disk so the work can be resumed or audited.
+
+`krow` is built for people who use Codex, Claude Code, Gemini CLI, or other coding agents as serious development tools and want less improvisation in the loop.
+
+## Why it exists
+
+Most coding-agent failures are orchestration failures, not model failures:
+
+- the agent starts editing before it has evidence
+- scope expands without a named owner
+- clarification happens one question at a time
+- project vocabulary drifts from the codebase
+- state disappears into chat history
+- completion is claimed before verification
+
+`krow` keeps the contract small and visible. Work moves through a local state machine, each phase produces structured output, and the repository's own language becomes part of the workflow.
 
 ## Quick Start
 
@@ -16,7 +31,7 @@ Do not run `npx krow ...`. That resolves a different npm package.
 
 `init` installs host-facing wrappers and seeds repo-local workflow files, including `.krow/language.md`.
 
-Then use the installed `work` entrypoint from your host:
+Then use the installed work entrypoint from your host:
 
 - Codex: `$work fix the failing release script`
 - Claude Code: `/work fix the failing release script`
@@ -27,9 +42,42 @@ Then use the installed `work` entrypoint from your host:
 - Codex `$language-map`
 - `.krow/language.md` for project vocabulary and language grounding
 
-## Philosophy
+## What it gives you
 
-Most agent failures are orchestration failures, not model failures.
+### Explicit workflow state
+
+Workflow data is persisted under `.krow/`:
+
+```text
+.krow/state/workflows/<workflowId>.json
+.krow/tasks/<workflowId>/
+.krow/relays/<workflowId>/
+```
+
+This makes agent work resumable instead of trapped in a single chat session.
+
+### Machine-readable signals
+
+The harness emits a small set of runtime signals:
+
+- `run`: execute one bounded phase for one workflow unit
+- `gate`: stop for bundled external input
+- `done`: terminal completed, blocked, or stopped state
+- `fault`: recoverable or unrecoverable runtime problem
+
+Hosts can wire those signals into their own UI, prompts, or automation.
+
+### Repository language grounding
+
+`krow` treats language as grounding, not mandatory translation. It reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, and records unresolved gaps.
+
+For Codex, `$language-map` runs a focused mapping workflow that describes a requested codebase scope in the repository's approved language and reports glossary gaps, naming drift, and missing canonical terms.
+
+### Bounded execution
+
+Broad work is decomposed into named units. Each unit has a task packet, an owner, expected evidence, and a verification path.
+
+## How it works
 
 `krow` keeps the workflow contract small and opinionated:
 
@@ -43,8 +91,6 @@ Most agent failures are orchestration failures, not model failures.
 
 Host coverage matters, but it is not the point. The point is to make coding work traceable, resumable, and less dependent on agent improvisation.
 
-## How It Works
-
 The installed wrappers are thin adapters over the same local control surface:
 
 - `route`: classify a message as chat or work without creating workflow state
@@ -53,7 +99,7 @@ The installed wrappers are thin adapters over the same local control surface:
 - `status`, `next`, `resume`: inspect or continue persisted workflow state
 - `submit-phase`, `submit-decisions`, `stop`: advance or terminate local workflow state
 
-Runtime signals are explicit:
+Runtime signals are intentionally small:
 
 - `run`: execute one bounded phase for one workflow unit
 - `gate`: stop for bundled external input only
@@ -68,26 +114,29 @@ Workflow data is persisted under `.krow/`:
 - `.krow/tasks/<workflowId>/`
 - `.krow/relays/<workflowId>/`
 
-## Language Grounding
+## Commands
 
-`krow` treats language as grounding, not as mandatory translation.
-
-It separates:
-
-- core terms: general software concepts like `Module`, `State`, `Workflow`, `Config`, `Permission`, `Test`
-- tech terms: stack-specific concepts like `React`, `Rust`, `FastAPI`, `Postgres`, `npm`
-- project terms: product or domain vocabulary specific to the repository
-
-During intake, `krow` reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, and records unresolved language gaps. Clarify should resolve those gaps from repository evidence first. Only durable approved terms should be promoted back into `.krow/language.md`.
-
-In Codex, `$language-map ...` runs a focused mapping workflow for this exact problem: it describes the requested codebase scope in the repository's approved language and reports glossary gaps, naming drift, and missing canonical terms.
+```bash
+krow route "fix the release script"
+krow intake "fix the release script"
+krow start --intent work "fix the release script"
+krow status <workflowId>
+krow next <workflowId>
+krow resume <workflowId>
+krow submit-phase <workflowId> <phase> <payload>
+krow submit-decisions <workflowId> <payload>
+krow stop <workflowId>
+```
 
 ## Repository Layout
 
 - `AGENTS.md`: always-loaded execution contract
-- `docs/HARNESS.md`: full system blueprint
 - `docs/FOUNDATIONS.md`: design rationale
-- `docs/skills/`: reusable workflow surfaces
+- `docs/HARNESS.md`: full system blueprint
+- `docs/HOST-INTEGRATION.md`: host integration notes
+- `docs/SIGNALS.md`: runtime signal contract
+- `docs/STATE.md`: persisted state model
+- `docs/TRANSITIONS.md`: state transition notes
 - `prompts/`: narrow role prompts
 - `schemas/`: payload, signal, and state schemas
 - `install/`: host wrapper installer
