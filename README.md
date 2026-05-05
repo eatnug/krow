@@ -1,72 +1,49 @@
 # krow
 
-`krow` is a host-agnostic workflow harness for coding agents.
+`krow` is a state-machine workflow harness for coding agents.
 
-It gives Codex, Claude Code, and Gemini CLI the same durable work loop:
+It makes agent work more deterministic: requests enter through explicit control surfaces, move through a small set of named phases, emit machine-readable signals, and persist durable state on disk. It also treats repository language as a first-class input, so broad work is grounded in the project's own terms instead of whatever wording happened to appear in the prompt.
 
-- start from one explicit work entrypoint
-- gather evidence before changing code
-- bundle clarification instead of asking one question at a time
-- persist workflow state, task packets, and handoff files on disk
-- move every unit through `clarify -> execute -> verify -> capture`
-
-## Why krow
-
-Most agent failures are orchestration failures, not model failures.
-
-`krow` keeps the runtime contract small and opinionated:
-
-- one worker owns one bounded task
-- ambiguous work should be clarified before broad execution
-- verification is required before claiming completion
-- the filesystem is shared memory for resume, relay, and auditability
-
-If you want your host prompts to stay lean while the workflow stays explicit, this is the layer.
-
-## What you get
-
-`krow init` installs host-facing wrappers and seeds repo-local workflow files.
-
-Today it installs:
-
-- Codex `$work`
-- Codex `$language-map`
-- Claude Code `/work`
-- Gemini CLI `/work`
-- `.krow/language.md` for project vocabulary and language grounding
-
-The published package name is `krow-cli`. The installed command remains `krow`.
-
-Do not run `npx krow ...`. That resolves a different npm package.
-
-## Install
-
-Use npm:
+## Quick Start
 
 ```bash
 npx --yes krow-cli@latest init
 ```
 
-That creates local wrappers which call a bootstrap launcher under the user's home directory. After `init`, host-driven runs no longer depend on npm cache state or package-name resolution.
+The published package name is `krow-cli`. The installed command remains `krow`.
 
-`init` creates `.krow/language.md` when it is missing and upgrades the old placeholder seed. Once a repository starts using that file for durable vocabulary, later `init` runs leave it alone.
+Do not run `npx krow ...`. That resolves a different npm package.
 
-## Quick start
+`init` installs host-facing wrappers and seeds repo-local workflow files, including `.krow/language.md`.
 
-1. Run `npx --yes krow-cli@latest init` inside the repository.
-2. Open your host and use its work entrypoint:
-   - Codex: `$work fix the failing release script`
-   - Claude Code: `/work fix the failing release script`
-   - Gemini CLI: `/work fix the failing release script`
-3. Let the host drive the returned signals until the workflow reaches `done`.
+Then use the installed `work` entrypoint from your host:
 
-For direct CLI use:
+- Codex: `$work fix the failing release script`
+- Claude Code: `/work fix the failing release script`
+- Gemini CLI: `/work fix the failing release script`
 
-```bash
-npx --yes krow-cli@latest start --intent work "fix the failing release script"
-```
+`init` also installs:
 
-## How it works
+- Codex `$language-map`
+- `.krow/language.md` for project vocabulary and language grounding
+
+## Philosophy
+
+Most agent failures are orchestration failures, not model failures.
+
+`krow` keeps the workflow contract small and opinionated:
+
+- run the workflow as an explicit state machine, not as hidden prompt convention
+- one worker owns one bounded task
+- use repository language as grounding for the work
+- gather evidence before changing code
+- bundle clarification instead of asking one question at a time
+- persist workflow state, task packets, and handoff files on disk
+- verification is required before claiming completion
+
+Host coverage matters, but it is not the point. The point is to make coding work traceable, resumable, and less dependent on agent improvisation.
+
+## How It Works
 
 The installed wrappers are thin adapters over the same local control surface:
 
@@ -91,7 +68,7 @@ Workflow data is persisted under `.krow/`:
 - `.krow/tasks/<workflowId>/`
 - `.krow/relays/<workflowId>/`
 
-## Language grounding
+## Language Grounding
 
 `krow` treats language as grounding, not as mandatory translation.
 
@@ -105,7 +82,7 @@ During intake, `krow` reads `.krow/language.md`, matches approved vocabulary, ma
 
 In Codex, `$language-map ...` runs a focused mapping workflow for this exact problem: it describes the requested codebase scope in the repository's approved language and reports glossary gaps, naming drift, and missing canonical terms.
 
-## Repository layout
+## Repository Layout
 
 - `AGENTS.md`: always-loaded execution contract
 - `docs/HARNESS.md`: full system blueprint
