@@ -137,6 +137,8 @@ export function clarifyGateInstructions(workflowId: string, stateRef: string): s
   return [
     `Workflow ${workflowId} is waiting for bundled clarification decisions.`,
     `Read the attached decisions or the current decision set from ${stateRef}.`,
+    "Submit decision answers as a JSON array, even when there is only one decision.",
+    'Each array item must be an object like {"decisionId":"<id>","selectedOptionId":"answer","customInput":"<user answer>"}.',
     `Collect all requested decisions from the user, then run: ${submitDecisionsCommand(workflowId)}`,
     "Replace the <JSON> heredoc line with the exact answers payload instead of quoting it inline.",
     `After submitting the answers, resume the workflow with: ${resumeCommand(workflowId)}`,

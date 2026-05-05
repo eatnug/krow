@@ -170,7 +170,11 @@ KROW_JSON
 \`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Then run:
+- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Submit those answers as one JSON array even when there is only one decision. Example:
+\`\`\`json
+[{"decisionId":"intent-lock","selectedOptionId":"answer","customInput":"confirmed"}]
+\`\`\`
+Then run:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
 <JSON>
@@ -301,7 +305,11 @@ KROW_JSON
 \`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Then run:
+- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Submit those answers as one JSON array even when there is only one decision. Example:
+\`\`\`json
+[{"decisionId":"intent-lock","selectedOptionId":"answer","customInput":"confirmed"}]
+\`\`\`
+Then run:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
 <JSON>
@@ -374,7 +382,11 @@ KROW_JSON
 \`\`\`
 
 ### type = "gate"
-- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Then run via run_shell_command:
+- If \`gate\` = "clarify": use \`signal.decisions\` when present; otherwise read \`state_ref\` and \`task_status_ref\`. Present the bundled decision set to the user in one message. Collect one answer object per decision using the matching \`decisionId\`, \`selectedOptionId: "answer"\`, and the user's exact answer in \`customInput\`. Submit those answers as one JSON array even when there is only one decision. Example:
+\`\`\`json
+[{"decisionId":"intent-lock","selectedOptionId":"answer","customInput":"confirmed"}]
+\`\`\`
+Then run via run_shell_command:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-decisions <workflow_id> - <<'KROW_JSON'
 <JSON>
