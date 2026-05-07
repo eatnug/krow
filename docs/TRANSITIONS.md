@@ -48,7 +48,7 @@ If a phase payload fails validation:
 
 1. do not mutate state
 2. return a validation error with field-level issues
-3. let the runtime retry with a repair prompt or escalate to a gate
+3. let the runtime retry with a repair instruction or escalate to a gate
 
 ## Quiet Retry Policy
 

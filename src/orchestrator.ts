@@ -97,20 +97,20 @@ function storePhaseOutput(state: WorkflowState, phase: RuntimePhase, payload: Ph
   currentUnitOutputBucket(state)[phase] = payload;
 }
 
-function schemaForPhase(phase: RuntimePhase): string {
-  return `schemas/payloads/${phase}-output.schema.json`;
+function outputContractForPhase(phase: RuntimePhase): string {
+  return `krow://contract/${phase}-output`;
 }
 
-function promptForPhase(phase: RuntimePhase): string {
+function instructionForPhase(phase: RuntimePhase): string {
   switch (phase) {
     case "clarify":
-      return "prompts/clarify.md";
+      return "krow://phase/clarify";
     case "execute":
-      return "prompts/executor.md";
+      return "krow://phase/execute";
     case "verify":
-      return "prompts/verifier.md";
+      return "krow://phase/verify";
     case "capture":
-      return "prompts/capture.md";
+      return "krow://phase/capture";
   }
 }
 
@@ -158,8 +158,8 @@ function runSignal(state: WorkflowState, phase: RuntimePhase, instructions: stri
     mode: state.mode,
     unit_id: unit?.id,
     phase,
-    prompt_ref: promptForPhase(phase),
-    required_schema: schemaForPhase(phase),
+    instruction_ref: instructionForPhase(phase),
+    output_contract: outputContractForPhase(phase),
     state_ref: workflowStatePath(state.workflowId),
     workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
     task_packet_ref: unit ? unitBriefPath(state.workflowId, unit.id) : undefined,
@@ -213,7 +213,7 @@ function faultSignal(
     mode: state?.mode,
     unit_id: state ? currentUnit(state)?.id : undefined,
     phase: state ? toRuntimePhase(state.phase) : undefined,
-    expected_schema: state && toRuntimePhase(state.phase) ? schemaForPhase(toRuntimePhase(state.phase)!) : undefined,
+    expected_contract: state && toRuntimePhase(state.phase) ? outputContractForPhase(toRuntimePhase(state.phase)!) : undefined,
     issues,
     error,
     recoverable,
@@ -348,7 +348,7 @@ export function nextSignal(state: WorkflowState): ControlSignal {
           kind: "decision_answers",
         },
         instructions: pendingDecisionsAreApproval(state)
-          ? "Collect one approval decision for each pending PRD/Plan prompt, submit decision answers, then resume the workflow."
+          ? "Collect one approval decision for each pending PRD/Plan decision, submit decision answers, then resume the workflow."
           : "Collect the pending external decisions, then submit decision answers and resume clarify.",
       };
     case "phase_execute":

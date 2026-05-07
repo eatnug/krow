@@ -34,13 +34,13 @@ The project keeps the runtime architecture pattern:
 - runtime-agnostic orchestrator core
 - explicit state as source of truth
 - machine-readable signals
-- schema validation before phase transition
+- contract validation before phase transition
 - resume from persisted state, not from fragile transcript memory
 - adapters and policy outside the core engine
 
 ## What This Project Is Not
 
-This project is not a transplant of any prompt pack or workflow brand.
+This project is not a transplant of any workflow brand.
 
 It intentionally excludes other named systems, their vocabulary, and their product-specific mechanics. The goal is a clean original system whose visible structure is explained by the three inputs above.
 

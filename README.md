@@ -27,8 +27,6 @@ npx --yes krow-cli@latest init
 
 The published package name is `krow-cli`. The installed command remains `krow`.
 
-Do not run `npx krow ...`. That resolves a different npm package.
-
 To refresh an existing install, use:
 
 ```bash
@@ -49,10 +47,13 @@ Then use the installed work entrypoint from your host:
 - Claude Code: `/work fix the failing release script`
 - Gemini CLI: `/work fix the failing release script`
 
-`init` also installs:
+Use the installed check entrypoint when you want to initialize or refresh krow's understanding of an existing codebase:
 
-- Codex `$language-map`
-- `.krow/language.md` for project vocabulary and language grounding
+- Codex: `$check`
+- Claude Code: `/check`
+- Gemini CLI: `/check`
+
+`init` also seeds `.krow/language.md` for project vocabulary and language grounding.
 
 ## What it gives you
 
@@ -77,7 +78,7 @@ The harness emits a small set of runtime signals:
 - `done`: terminal completed, blocked, or stopped state
 - `fault`: recoverable or unrecoverable runtime problem
 
-Hosts can wire those signals into their own UI, prompts, or automation.
+Hosts can wire those signals into their own UI or automation.
 
 ### Repository language grounding
 
@@ -85,7 +86,7 @@ Hosts can wire those signals into their own UI, prompts, or automation.
 
 When `.krow/concepts/*.md` files exist, intake also matches related Project Concept Maps by concept key, title, alias, hierarchy, related concepts, business use cases, and code anchors. These maps are retrieval guides for likely code and test surfaces; they are not a hand-maintained dependency graph.
 
-For Codex, `$language-map` runs a focused mapping workflow that describes a requested codebase scope in the repository's approved language and reports glossary gaps, naming drift, and missing canonical terms.
+`$check` runs the same idea outside a work request. It scans the repository as read-only evidence, writes rebuildable evidence and a check report under `.krow/`, proposes Project Language and Concept Map updates, then asks the user before applying approved `.krow` changes. It does not edit source code.
 
 ### Bounded execution
 
@@ -95,7 +96,7 @@ Broad work is decomposed into named units. Each unit has a task packet, an owner
 
 `krow` keeps the workflow contract small and opinionated:
 
-- run the workflow as an explicit state machine, not as hidden prompt convention
+- run the workflow as an explicit state machine, not as hidden chat convention
 - one worker owns one bounded task
 - use repository language as grounding for the work
 - gather evidence before changing code
@@ -109,6 +110,8 @@ The installed wrappers are thin adapters over the same local control surface:
 
 - `route`: resolve explicit chat or work intent without creating workflow state
 - `intake`: extract anchors, missing evidence, clarification questions, and a proposed unit graph
+- `check`: scan repo evidence, write a krow check report, and propose `.krow` language/concept updates without changing source code
+- `check-apply`: apply explicit check decisions to `.krow/language.md` and `.krow/concepts/` only
 - `documents`: scan PRD, plan, example, review, approval, and trace-link metadata
 - `review`: derive a Review Report from workflow documents, Example-test links, implementation links, and verification output
 - `start`: persist workflow state immediately and emit the first `run` or `gate` signal
@@ -144,6 +147,8 @@ Product intent documents can live alongside that runtime state:
 ```bash
 krow route --intent work "fix the release script"
 krow intake --intent work "fix the release script"
+krow check
+krow check-apply <checkId> -
 krow documents "fix the release script"
 krow review <workflowId>
 krow start --intent work "fix the release script"
@@ -164,8 +169,8 @@ krow stop <workflowId>
 - `docs/SIGNALS.md`: runtime signal contract
 - `docs/STATE.md`: persisted state model
 - `docs/TRANSITIONS.md`: state transition notes
-- `prompts/`: narrow role prompts
-- `schemas/`: payload, signal, and state schemas
+- `src/orchestrator.ts`: runtime state machine, signal builder, and phase guidance
+- `src/validators.ts`: runtime payload and state validators
 - `install/`: host wrapper installer
 
 ## Development

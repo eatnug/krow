@@ -21,6 +21,7 @@ const RUNTIME_DIRECTORY_RELATIVE_PATHS = [
   [".krow", "examples"],
   [".krow", "reviews"],
   [".krow", "generated"],
+  [".krow", "checks"],
   [".krow", "artifacts"],
   [".krow", "logs"],
   [".krow", "knowledge"],
@@ -364,7 +365,6 @@ Treat the current user message as explicit work intent.
 
 Use only the exact bootstrap command rendered in this file for krow control operations.
 Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
-Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
 
 ## Startup
 
@@ -382,7 +382,7 @@ Parse the JSON response.
 ### type = "run"
 - Read \`state_ref\` before acting.
 - Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
-- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Use \`phase\`, \`instruction_ref\`, \`output_contract\`, and \`instructions\` as the contract.
 - Spawn an Agent for this phase. DO NOT execute the phase yourself.
 - Tool policy by phase:
   - \`clarify\`: Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *), Bash(rg *), Agent
@@ -433,52 +433,72 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - \`.krow/language.md\` is controlled vocabulary plus grounding evidence for the target codebase. It is not a layer-by-layer translation map. Read it when wording, domain terms, module names, or local architectural language matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
-const CODEX_LANGUAGE_MAP_SKILL = `---
-name: language-map
-description: Map the current codebase or requested scope into the project's approved local language, then report missing glossary terms, naming drift, and language gaps. Use only when the user explicitly invokes \`$language-map\` or asks to map/sync/describe code in the project language.
+const CODEX_CHECK_SKILL = `---
+name: check
+description: Check whether the repository's code, krow Project Language, Concept Maps, and intent documents are aligned. Use only when the user explicitly invokes \`$check\` or asks to run the krow sanity/alignment check.
 ---
 
 <!-- ${MANAGED_MARKER} -->
 
-# Language Map
+# Check
 
-Describe the target codebase or requested scope using the project's approved local language.
+Run the krow alignment check for the current repository.
 
 ## Command Authority
 
 Use only the exact bootstrap command rendered in this file for krow control operations.
 Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
-Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
+
+## Write Boundary
+
+- Read the repository workspace as evidence.
+- Let krow write only inside the configured krow workspace, which is \`.krow\` by default.
+- Do not edit source code, tests, app files, package source, or business logic during \`$check\`.
+- Code changes belong in \`$work\`, not \`$check\`.
 
 ## Startup
 
-If $ARGUMENTS is empty, map from the repository's likely app entrypoints and major module surfaces.
+Run: \`${KROW_COMMAND_PLACEHOLDER} check "$ARGUMENTS"\`
 
-First read \`.krow/language.md\` if it exists.
+Parse the JSON response.
 
-Build this normalized request:
+Read \`check.reportRef\`, \`check.questionRefs\`, and proposed files when present.
 
-\`\`\`text
-Map the requested codebase or scope into the approved project-local language.
+## Decision Loop
 
-Scope:
-<ARGUMENTS, or repository entrypoints and major module surfaces if empty>
+If \`check.decisions\` is empty:
+- Report the summary and \`check.reportRef\`.
+- Stop.
 
-Acceptance criteria:
-- Read .krow/language.md first when it exists.
-- Inspect concrete code evidence before naming a term, module role, or flow.
-- Describe the codebase in controlled vocabulary statements grouped by flow or module chunk.
-- Identify language gaps: missing canonical terms, duplicate names for the same concept, one name used for conflicting concepts, important flows not represented in .krow/language.md, and local architecture patterns worth naming.
-- Keep core/software terms, tech terms, and project terms separate; do not create a layer-by-layer mapping table.
-- Do not bulk-fill .krow/language.md.
-- Add to .krow/language.md only durable, evidence-backed terms that are clearly reusable.
-- Keep uncertain proposals and drift findings in the task packet/result instead of promoting them.
-- Do not make unrelated code changes.
+If \`check.decisions\` is non-empty:
+- Present the full bundled decision set to the user in one message.
+- For each decision, collect one answer object using the matching \`decisionId\`.
+- Use \`selectedOptionId: "approve"\` only when the user clearly approves the proposed entry as written.
+- Use \`selectedOptionId: "revise"\` when the user gives a correction. Put the corrected meaning in \`customInput\`. If the user gives structured fields, put minified JSON in \`customInput\`.
+- Use \`selectedOptionId: "reject"\` when the user declines the entry.
+- Submit all answers as one JSON array.
+
+Run this exact safe pattern:
+
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
 \`\`\`
 
-Run: \`${KROW_COMMAND_PLACEHOLDER} start --intent work "<normalized request>"\`
+Then parse the result and report:
 
-Then continue using the same Loop and Rules from the installed \`$work\` skill. If those instructions are not already in context, read \`.codex/skills/work/SKILL.md\` and follow its Loop section exactly.
+- check report ref
+- apply report ref
+- applied refs
+- skipped decisions
+
+## Rules
+
+- The local check control surface is: \`check\`, \`check-apply\`.
+- Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\`.
+- Minify JSON before passing it to \`check-apply\`.
+- Apply only explicit user decisions. Do not silently approve ambiguous terms.
 `;
 
 const CLAUDE_WORK_COMMAND = `---
@@ -499,7 +519,6 @@ Treat \`$request\` as explicit work intent.
 
 Use only the exact bootstrap command rendered in this file for krow control operations.
 Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
-Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
 
 ## Startup
 
@@ -517,7 +536,7 @@ Parse the JSON response.
 ### type = "run"
 - Read \`state_ref\` before acting.
 - Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
-- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Use \`phase\`, \`instruction_ref\`, \`output_contract\`, and \`instructions\` as the contract.
 - Spawn an Agent for this phase. DO NOT execute the phase yourself.
 - Tool policy by phase:
   - \`clarify\`: Read, Grep, Glob, Bash(git *), Bash(ls *), Bash(cat *), Bash(rg *), Agent
@@ -568,6 +587,40 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 - \`.krow/language.md\` is controlled vocabulary plus grounding evidence for the target codebase. It is not a layer-by-layer translation map. Read it when wording, domain terms, module names, or local architectural language matter. Keep temporary language proposals in the task packet; only promote durable approved terms to \`.krow/language.md\`.
 `;
 
+const CLAUDE_CHECK_COMMAND = `---
+description: Run the krow alignment check without editing source code.
+argument-hint: "[scope]"
+arguments:
+  - scope
+allowed-tools: Bash, Read, Grep, Glob
+---
+
+<!-- ${MANAGED_MARKER} -->
+
+# check
+
+Run krow's repository alignment check.
+
+Use only the exact bootstrap command rendered in this file for krow control operations.
+Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
+
+Read the repository as evidence, but do not edit source code, tests, app files, package source, or business logic. The check flow may write only inside \`.krow\`.
+
+Run: \`${KROW_COMMAND_PLACEHOLDER} check "$scope"\`
+
+Parse the JSON response. Read the report and question refs.
+
+If decisions are present, ask the user the full bundled decision set in one message. Submit explicit approve/revise/reject answers with:
+
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
+
+Report the check report, apply report, applied refs, and skipped decisions.
+`;
+
 const GEMINI_WORK_COMMAND = `# ${MANAGED_MARKER}
 
 description = "Run actionable engineering work through the work intake."
@@ -579,7 +632,6 @@ Treat {{args}} as explicit work intent.
 
 Use only the exact bootstrap command rendered in this file for krow control operations.
 Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
-Never run \`npx krow start\`; the npm package named \`krow\` is not this CLI and has no executable.
 
 ## Startup
 
@@ -597,7 +649,7 @@ Parse the JSON response.
 ### type = "run"
 - Read \`state_ref\` before acting.
 - Read \`workflow_task_index_ref\`, \`task_packet_ref\`, and any \`relay_refs\` before acting.
-- Use \`phase\`, \`prompt_ref\`, \`required_schema\`, and \`instructions\` as the contract.
+- Use \`phase\`, \`instruction_ref\`, \`output_contract\`, and \`instructions\` as the contract.
 - Tool policy by phase:
   - \`clarify\`: use read_file, grep_search, list_directory, and run_shell_command only for read-only inspection
   - \`execute\`: use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command
@@ -606,7 +658,7 @@ Parse the JSON response.
 - In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
 - In \`execute\`, complete only the current unit. When the task packet includes Examples, create or update tests for those Examples before changing implementation code, then implement code, rerun the scoped checks, and return \`executionSteps\`, \`exampleTests\`, and \`implementationLinks\`. If the workflow state shows other ready sibling units, use that graph metadata for host scheduling; if the host cannot parallelize them, process the ready units step by step without skipping transitions.
 - In \`verify\`, try to disprove the claimed result before accepting it. Always include concrete checks, evidence, and any unverified claims.
-- When the phase work is complete, collect your result as one JSON object matching \`required_schema\`.
+- When the phase work is complete, collect your result as one JSON object matching \`output_contract\`.
 - Run via run_shell_command using this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
 \`\`\`bash
 ${KROW_COMMAND_PLACEHOLDER} submit-phase <workflow_id> <phase> - <<'KROW_JSON'
@@ -646,6 +698,34 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 """
 `;
 
+const GEMINI_CHECK_COMMAND = `# ${MANAGED_MARKER}
+
+description = "Run the krow alignment check without editing source code."
+
+prompt = """
+Run krow's repository alignment check for {{args}}.
+
+Use only the exact bootstrap command rendered in this file for krow control operations.
+Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
+
+Read the repository as evidence, but do not edit source code, tests, app files, package source, or business logic. The check flow may write only inside \`.krow\`.
+
+Run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} check "{{args}}"\`
+
+Parse the JSON response. Read the report and question refs.
+
+If decisions are present, ask the user the full bundled decision set in one message. Submit explicit approve/revise/reject answers using:
+
+\`\`\`bash
+${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> - <<'KROW_JSON'
+<JSON>
+KROW_JSON
+\`\`\`
+
+Report the check report, apply report, applied refs, and skipped decisions.
+"""
+`;
+
 function printUsage() {
   process.stdout.write(
     [
@@ -654,7 +734,7 @@ function printUsage() {
       "  krow remove [-g | --global] [--home <dir>]",
       "",
       "Commands:",
-      "  init      Install Codex $work, Claude Code /work, and Gemini CLI /work wrappers",
+      "  init      Install Codex $work/$check, Claude Code /work and /check, and Gemini CLI /work and /check wrappers",
       "  remove    Remove installed Codex, Claude Code, and Gemini CLI wrappers",
       "",
       "Flags:",
@@ -773,34 +853,6 @@ async function removePathIfExists(targetPath) {
   return "removed";
 }
 
-async function removeEmptyParentDirectories(targetPath, boundaryPath) {
-  let dir = path.dirname(targetPath);
-  while (dir !== boundaryPath && dir !== path.dirname(dir)) {
-    try {
-      await fs.rmdir(dir);
-      dir = path.dirname(dir);
-    } catch {
-      break;
-    }
-  }
-}
-
-async function removeManagedFileIfExists(targetPath, boundaryPath) {
-  const exists = await pathExists(targetPath);
-  if (!exists) {
-    return "skipped (not found)";
-  }
-
-  const content = await fs.readFile(targetPath, "utf8");
-  if (!content.includes(MANAGED_MARKER)) {
-    return "skipped (not managed by krow)";
-  }
-
-  await fs.unlink(targetPath);
-  await removeEmptyParentDirectories(targetPath, boundaryPath);
-  return "removed";
-}
-
 export async function runInit({ force, global: isGlobal, home }) {
   if (home == null) {
     home = isGlobal ? os.homedir() : process.cwd();
@@ -885,9 +937,9 @@ export async function runInit({ force, global: isGlobal, home }) {
       content: renderManagedContent(CODEX_WORK_SKILL, home),
     },
     {
-      label: "Codex $language-map skill",
-      path: path.join(home, ".codex", "skills", "language-map", "SKILL.md"),
-      content: renderManagedContent(CODEX_LANGUAGE_MAP_SKILL, home),
+      label: "Codex $check skill",
+      path: path.join(home, ".codex", "skills", "check", "SKILL.md"),
+      content: renderManagedContent(CODEX_CHECK_SKILL, home),
     },
     {
       label: "Claude Code /work command",
@@ -895,9 +947,19 @@ export async function runInit({ force, global: isGlobal, home }) {
       content: renderManagedContent(CLAUDE_WORK_COMMAND, home),
     },
     {
+      label: "Claude Code /check command",
+      path: path.join(home, ".claude", "commands", "check.md"),
+      content: renderManagedContent(CLAUDE_CHECK_COMMAND, home),
+    },
+    {
       label: "Gemini CLI /work command",
       path: path.join(home, ".gemini", "commands", "work.toml"),
       content: renderManagedContent(GEMINI_WORK_COMMAND, home),
+    },
+    {
+      label: "Gemini CLI /check command",
+      path: path.join(home, ".gemini", "commands", "check.toml"),
+      content: renderManagedContent(GEMINI_CHECK_COMMAND, home),
     },
   ];
 
@@ -938,16 +1000,24 @@ export async function runRemove({ global: isGlobal, home }) {
       path: path.join(home, ".codex", "skills", "work", "SKILL.md"),
     },
     {
-      label: "Codex $language-map skill",
-      path: path.join(home, ".codex", "skills", "language-map", "SKILL.md"),
+      label: "Codex $check skill",
+      path: path.join(home, ".codex", "skills", "check", "SKILL.md"),
     },
     {
       label: "Claude Code /work command",
       path: path.join(home, ".claude", "commands", "work.md"),
     },
     {
+      label: "Claude Code /check command",
+      path: path.join(home, ".claude", "commands", "check.md"),
+    },
+    {
       label: "Gemini CLI /work command",
       path: path.join(home, ".gemini", "commands", "work.toml"),
+    },
+    {
+      label: "Gemini CLI /check command",
+      path: path.join(home, ".gemini", "commands", "check.toml"),
     },
   ];
 

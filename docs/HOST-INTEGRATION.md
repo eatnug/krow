@@ -22,9 +22,9 @@ Each host wrapper should:
 4. map runtime capability policies onto the host's tool-permission system
 5. map runtime signals onto the host's own worker, tool, and user-interaction primitives
 
-## What Does Not Belong in Core Prompts
+## What Does Not Belong in Core Instructions
 
-Do not encode these in `AGENTS.md`, `CLAUDE.md`, or core role prompts:
+Do not encode these in `AGENTS.md`, `CLAUDE.md`, or generated phase instructions:
 
 - slash-command syntax
 - skill-invocation syntax
@@ -40,5 +40,6 @@ Examples of valid wrapper choices:
 
 - Claude Code wrapper registers a native `/work` command and forwards the normalized request as explicit work intent
 - Codex wrapper registers a native `$work` skill or plugin entry and forwards the normalized request as explicit work intent
+- Gemini CLI wrapper registers native `/work` and `/check` commands and forwards them to the same local runtime
 
-Both wrappers should feed the same core runtime and the same `work` intake behavior.
+All wrappers should feed the same core runtime. `$work`/`/work` may edit project code through approved workflow units; `$check`/`/check` reads the project and writes only `.krow` alignment files.

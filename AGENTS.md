@@ -30,25 +30,13 @@ LLM capability is already sufficient for many engineering tasks. Quality comes f
 
 Work directly when the task has one narrow objective, one narrow write scope, and one short validation path.
 
-Use the `work` intake when the request is actionable and should be driven through the flow system.
+Use `$work` when the request should change code, tests, config, documents, or other project artifacts.
 
-Internal workflow surfaces:
+Use `$check` when the request is to initialize, refresh, or audit krow's understanding of an existing codebase.
 
-- `anchor-pass` for broad or high-risk requests
-- `task-carving` for turning one task into multiple clean task packets
-- `relay-run` for coordinated multi-task delivery
-- `signal-gates` for machine-readable phase and approval routing
-- `finish-loop` when the user wants completion, not a one-pass attempt
-- `baton-files` and `merge-brief` between units
-- `pattern-capture` after discovering hard-won reusable patterns
+`$check` reads the project workspace and writes only inside `.krow`. It may update generated evidence, check reports, and approved Project Language or Concept Maps. It does not edit source code.
 
-The `work` intake decides whether to:
-
-- proceed directly
-- run `anchor-pass`
-- split through `task-carving`
-- coordinate through `relay-run`
-- stay in `finish-loop` until completion
+The runtime decides internally whether work is direct, needs clarification, needs multiple units, or should continue until verification passes.
 
 ## Anchor Gate
 
@@ -135,7 +123,7 @@ Each response should carry:
 - workflow id
 - current unit id
 - current phase
-- prompt or task packet reference
+- phase instruction or task packet reference
 - required inputs
 - completion callback or next action
 
@@ -147,7 +135,7 @@ Do not ask one missing requirement at a time when several are already known.
 
 ## Core Roles
 
-Use narrow role prompts for workers. Core loop roles:
+Use narrow runtime roles for workers. Core loop roles:
 
 - `clarify`: tighten scope, expose missing facts, and define the exact execution edge
 - `executor`: implementation and focused refactoring

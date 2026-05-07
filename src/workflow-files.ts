@@ -12,6 +12,7 @@ export const PLANS_DIR = ".krow/plans";
 export const EXAMPLES_DIR = ".krow/examples";
 export const REVIEWS_DIR = ".krow/reviews";
 export const GENERATED_DIR = ".krow/generated";
+export const CHECKS_DIR = ".krow/checks";
 export const ARTIFACTS_DIR = ".krow/artifacts";
 export const LOGS_DIR = ".krow/logs";
 export const KNOWLEDGE_DIR = ".krow/knowledge";
@@ -42,6 +43,14 @@ export function conceptMapPath(conceptKey: string): string {
 
 export function templatesDirPath(): string {
   return TEMPLATES_DIR;
+}
+
+export function checksDirPath(): string {
+  return CHECKS_DIR;
+}
+
+export function checkRunDirPath(checkId: string): string {
+  return `${CHECKS_DIR}/${checkId}`;
 }
 
 export function absoluteWorkflowStatePath(workflowId: string, rootDir = process.cwd()): string {

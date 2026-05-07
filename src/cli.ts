@@ -27,6 +27,7 @@ import type {
   CapabilityIntent,
   CapabilityKind,
   CapabilityPolicy,
+  DecisionAnswer,
   DecisionPrompt,
   IntakePlan,
   IntakeIntentLock,
@@ -55,6 +56,7 @@ import {
 } from "./document-contracts.js";
 import { executionContractFromRetrieval } from "./execution-contracts.js";
 import { writeUnitReviewReport } from "./review-report.js";
+import { applyProjectCheckDecisions, runProjectCheck } from "./project-check.js";
 
 type FlagMap = Record<string, string | boolean>;
 
@@ -132,6 +134,8 @@ const proseSymbolStopWords = new Set([
 const localControlDescriptions: Record<LocalControlCommandName, string> = {
   route: "Resolve explicit chat or work intent without creating workflow state.",
   intake: "Produce an intake plan and missing-context analysis without creating workflow state.",
+  check: "Scan repo evidence, write a krow check report, and propose approved-language updates without changing source code.",
+  "check-apply": "Apply explicit krow check decisions to .krow language and concept documents only.",
   documents: "Scan krow Markdown documents, approval sections, and derived trace ids.",
   review: "Derive a Review Report from workflow documents, execution traces, and verification output.",
   start: "Create workflow state from a message and emit the first control signal.",
@@ -161,6 +165,8 @@ function printUsage(): void {
       "Usage:",
       "  route <message> [--intent <work|chat>]",
       "  intake <message> [--intent <work|chat>]",
+      "  check [scope] [--root <dir>]",
+      "  check-apply <checkId> <json|path|-> [--root <dir>]",
       "  documents [message] [--root <dir>]",
       "  review <workflowId> [unitId] [--root <dir>]",
       "  start <message> [--intent <work|chat>] [--capture] [--mode <name>] [--root <dir>]",
@@ -232,6 +238,17 @@ function readJsonInput(value: string): unknown {
 
   const filePath = path.resolve(trimmed);
   return JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+}
+
+function readDecisionAnswersInput(value: string): DecisionAnswer[] {
+  const input = readJsonInput(value);
+  if (Array.isArray(input)) {
+    return input as DecisionAnswer[];
+  }
+  if (input && typeof input === "object" && Array.isArray((input as { answers?: unknown }).answers)) {
+    return (input as { answers: DecisionAnswer[] }).answers;
+  }
+  throw new Error("check-apply input must be a JSON array or an object with an answers array");
 }
 
 function rootDir(flags: FlagMap): string {
@@ -1060,6 +1077,24 @@ function resolvePhasePolicy(phase: RuntimePhase): CapabilityPolicy {
 
 function resolveControlPolicy(commandName: LocalControlCommandName): CapabilityPolicy {
   switch (commandName) {
+    case "check":
+      return createPolicy(
+        "control:check",
+        "control",
+        ["repo_scan", "search_code", "inspect_docs", "read_state", "write_state", "emit_gate"],
+        [
+          "local control command only",
+          "writes generated evidence, check report, and proposed krow files under .krow only",
+          "does not edit source code",
+        ],
+      );
+    case "check-apply":
+      return createPolicy(
+        "control:check-apply",
+        "control",
+        ["inspect_docs", "read_state", "write_state"],
+        ["local control command only", "applies explicit check decisions to .krow language and concept documents only"],
+      );
     case "review":
       return createPolicy(
         "control:review",
@@ -1287,10 +1322,10 @@ function freeformDecisionPrompt(id: string, question: string, context?: string):
 }
 
 function buildClarifyDecisionPrompts(intake: IntakePlan): DecisionPrompt[] {
-  const prompts: DecisionPrompt[] = [];
+  const decisionPrompts: DecisionPrompt[] = [];
 
   if (intake.intentLock) {
-    prompts.push(
+    decisionPrompts.push(
       freeformDecisionPrompt(
         "intent-lock",
         intake.intentLock.confirmationPrompt,
@@ -1301,7 +1336,7 @@ function buildClarifyDecisionPrompts(intake: IntakePlan): DecisionPrompt[] {
 
   const followUpQuestions = intake.intentLock ? intake.questions.slice(1) : intake.questions;
   followUpQuestions.forEach((question, index) => {
-    prompts.push(
+    decisionPrompts.push(
       freeformDecisionPrompt(
         `clarify-${index + 1}`,
         question,
@@ -1310,7 +1345,7 @@ function buildClarifyDecisionPrompts(intake: IntakePlan): DecisionPrompt[] {
     );
   });
 
-  return prompts;
+  return decisionPrompts;
 }
 
 function primeWorkflowWithClarifyGate(state: WorkflowState, intake: IntakePlan): void {
@@ -1469,6 +1504,37 @@ function visibleDocumentRetrieval(retrieval: DocumentRetrieval) {
     related: retrieval.related.map(visibleDocumentSummary),
     approvalGaps: retrieval.approvalGaps.map(visibleDocumentSummary),
   };
+}
+
+function handleCheck(args: string[], flags: FlagMap): void {
+  const scope = args.join(" ").trim() || undefined;
+  const result = runProjectCheck({
+    scope,
+    rootDir: rootDir(flags),
+  });
+
+  outputJSON({
+    control: getLocalControlCommand("check"),
+    check: result,
+  });
+}
+
+function handleCheckApply(args: string[], flags: FlagMap): void {
+  const [checkId, inputValue] = args;
+  if (!checkId || !inputValue) {
+    throw new Error("check-apply requires <checkId> <json|path|->");
+  }
+
+  const result = applyProjectCheckDecisions({
+    checkId,
+    answers: readDecisionAnswersInput(inputValue),
+    rootDir: rootDir(flags),
+  });
+
+  outputJSON({
+    control: getLocalControlCommand("check-apply"),
+    applied: result,
+  });
 }
 
 function handleDocuments(args: string[], flags: FlagMap): void {
@@ -1661,6 +1727,12 @@ function main(): void {
       return;
     case "intake":
       handleIntake(positionals, flags);
+      return;
+    case "check":
+      handleCheck(positionals, flags);
+      return;
+    case "check-apply":
+      handleCheckApply(positionals, flags);
       return;
     case "documents":
       handleDocuments(positionals, flags);

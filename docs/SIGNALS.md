@@ -23,7 +23,7 @@ The engine is the single source of truth. Runtimes merely execute the next instr
 
 Use when the next action is autonomous.
 
-Suggested schema:
+Suggested shape:
 
 ```json
 {
@@ -31,8 +31,8 @@ Suggested schema:
   "workflow_id": "wf-123",
   "unit_id": "unit-02",
   "phase": "execute",
-  "prompt_ref": "or task packet reference",
-  "required_schema": "schemas/payloads/execute-output.schema.json",
+  "instruction_ref": "krow://phase/clarify",
+  "output_contract": "krow://contract/execute-output",
   "state_ref": ".krow/state/workflows/wf-123.json",
   "workflow_task_index_ref": ".krow/tasks/wf-123/index.md",
   "task_packet_ref": ".krow/tasks/wf-123/unit-02/brief.md",
@@ -53,7 +53,7 @@ Suggested schema:
 
 Use when explicit human or lead input is required.
 
-Suggested schema:
+Suggested shape:
 
 ```json
 {
@@ -72,7 +72,7 @@ Suggested schema:
 
 Use when the workflow reaches terminal success.
 
-Suggested schema:
+Suggested shape:
 
 ```json
 {
@@ -89,7 +89,7 @@ Suggested schema:
 
 Use when the engine cannot continue because the state is invalid or the failure is unrecoverable.
 
-Suggested schema:
+Suggested shape:
 
 ```json
 {
@@ -170,7 +170,7 @@ The runtime should be split into:
 - `IOAdapter`
 - `SystemAdapter`
 
-The engine should not know how prompts are executed, how approvals are collected, or how files are rendered in a given UI.
+The engine should not know how phase instructions are executed, how approvals are collected, or how files are rendered in a given UI.
 
 ## 8. Filesystem Bindings
 

@@ -418,7 +418,7 @@ The process becomes more deterministic by constraining transformations.
 Avoid:
 
 ```text
-prompt -> agent improvises -> code
+request text -> agent improvises -> code
 ```
 
 Prefer:
@@ -688,9 +688,9 @@ Initial output:
 
 If the user provides a service or feature description, init can seed minimal proposed Project Language entries. Those entries should remain `proposed` until approved.
 
-Existing-code migration is a later capability, not the default responsibility of init.
+Existing-code connection belongs to `$check`, not `init`.
 
-Later migration can scan routes, tests, exported symbols, package structure, and filenames to propose Concept Maps and code anchors. Those proposals should be evidence, not automatic truth.
+`$check` is both the brownfield first pass and the recurring sanity check. It scans routes, tests, exported symbols, package structure, filenames, existing krow docs, and Concept Map anchors as evidence. It writes generated evidence, a check report, and proposed krow document updates under `.krow/`. It does not edit source code. Proposed Project Language and Concept Map changes become part of the krow baseline only after explicit user approval.
 
 ### Agent Runtime Boundary
 
@@ -698,6 +698,7 @@ The AI agent integration should be organized around explicit inputs and outputs:
 
 - `DocumentStore`: reads and writes Markdown artifacts
 - `Retriever`: builds the retrieval bundle from Project Language, Concept Maps, search, and generated evidence
+- `Checker`: scans repository evidence and writes `.krow` check reports plus proposed language/concept updates
 - `Clarifier`: asks bundled questions only for real ambiguity
 - `PRDWriter`: drafts or updates the PRD using Project Language
 - `PlanWriter`: creates reviewable work units from the approved PRD
@@ -760,7 +761,7 @@ Success:
 
 - `.krow/` runtime directories are created
 - default Markdown templates are created
-- agent instruction surfaces or skills are connected where supported
+- agent instruction surfaces or skills are connected where supported, including `$work` and `$check`
 - CLI entry points know where to read and write workflow state
 - init does not attempt brownfield concept extraction by default
 
@@ -818,6 +819,20 @@ Success:
 - ambiguous terms are bundled into one question set
 - the agent can restate the user's request as a concrete goal using approved or proposed terms
 - retrieval can use Project Language, Project Concept Maps, PRDs, plans, code anchors, and text search
+
+### Phase 3.5: Check and Align
+
+Add the user-facing `$check` surface for brownfield initialization and recurring drift checks.
+
+Success:
+
+- `$check` reads the repository and writes only under `.krow`
+- generated evidence is rebuilt under `.krow/generated`
+- check reports are written under `.krow/checks/<check-id>/report.md`
+- proposed Project Language entries and Concept Maps are generated as reviewable `.krow` files
+- ambiguous concepts are returned as bundled questions
+- only explicit user decisions are applied to `.krow/language.md` and `.krow/concepts`
+- source code changes remain out of scope for `$check`
 
 ### Phase 4: PRD and Plan Approval
 
@@ -908,6 +923,8 @@ Use these defaults until evidence forces a change:
 - Project Concept Maps are optional retrieval aids, not mandatory per-file docs
 - Project Concept Maps can cover product concepts and important system concepts such as stores, repositories, APIs, adapters, jobs, and shared UI pages
 - `krow init` is runtime and workflow bootstrap, not brownfield codebase migration
+- `$check` covers brownfield first connection and recurring language/code sanity checks
+- `$check` may write `.krow` reports, generated evidence, and approved Project Language or Concept Map updates, but not source code
 - language-aware parsing is not required initially
 - naming consistency is enforced first on docs, tests, and story-facing code
 
@@ -919,11 +936,10 @@ These decisions are settled for the current implementation direction:
 - Concept Maps are created for concepts that need implementation responsibility, hierarchy, boundaries, or code anchors beyond a glossary entry.
 - Generated evidence starts lightweight: text search, tests, symbols, and routes. Dependency graphs and call-flow summaries come later.
 - `krow init` bootstraps runtime structure, agent instruction surfaces, CLI connection points, templates, and default files.
-- Brownfield concept extraction and codebase migration are deferred until the core synchronization loop works.
+- Brownfield concept extraction starts through `$check`: check report plus proposed `.krow` updates, with explicit user approval before the krow baseline changes.
 
 Deferred questions:
 
-- What migration workflow should convert an existing codebase into Project Language and Concept Maps?
 - When should optional dependency or call-flow evidence become strict enough to affect planning or review?
 
 ## 17. Implementation Roadmap

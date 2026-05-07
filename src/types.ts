@@ -226,8 +226,8 @@ export interface RunSignal {
   mode?: string;
   unit_id?: string;
   phase: RuntimePhase;
-  prompt_ref: string;
-  required_schema: string;
+  instruction_ref: string;
+  output_contract: string;
   state_ref: string;
   workflow_task_index_ref?: string;
   task_packet_ref?: string;
@@ -276,7 +276,7 @@ export interface FaultSignal {
   mode?: string;
   unit_id?: string;
   phase?: RuntimePhase;
-  expected_schema?: string;
+  expected_contract?: string;
   issues?: string[];
   error: string;
   recoverable: boolean;
@@ -474,8 +474,8 @@ export interface WorkerLaunchRequest {
   workflowId: string;
   unitId: string;
   phase: RuntimePhase;
-  promptRef: string;
-  requiredSchema: string;
+  instructionRef: string;
+  outputContract: string;
   instructions: string;
   capabilityPolicy: CapabilityPolicy;
   executionMode: WorkerExecutionMode;
@@ -497,6 +497,8 @@ export interface ForkedWorkerAdapter {
 export type LocalControlCommandName =
   | "route"
   | "intake"
+  | "check"
+  | "check-apply"
   | "documents"
   | "review"
   | "start"
