@@ -28,7 +28,7 @@ The project keeps only the methodology that is broadly transferable:
 
 What matters here is not Claude-specific syntax. It is the discipline of keeping control in code and keeping worker context narrow.
 
-## 3. spets Architecture
+## 3. Runtime Architecture
 
 The project keeps the runtime architecture pattern:
 - runtime-agnostic orchestrator core
@@ -49,6 +49,6 @@ It intentionally excludes other named systems, their vocabulary, and their produ
 The resulting shape is:
 - philosophy decides what good orchestration means
 - Claude-style methodology shapes context, roles, and control rails
-- spets-style architecture shapes runtime, state, and validation
+- krow runtime architecture shapes state, signals, and validation
 
 That combination produces `krow`.

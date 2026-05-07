@@ -5,10 +5,12 @@ import type {
   ExecuteOutput,
   LanguageGrounding,
   RuntimePhase,
+  UnitReviewReport,
   VerifyOutput,
   WorkflowState,
   WorkflowUnit,
 } from "./types.js";
+import type { DocumentRetrieval } from "./document-contracts.js";
 import {
   absolutePath,
   absoluteRoot,
@@ -18,9 +20,14 @@ import {
   unitBriefPath,
   unitContextPath,
   unitRelayPath,
+  unitReviewReportPath,
   unitResultPath,
   unitStatusPath,
+  conceptIndexPath,
+  conceptsDirPath,
+  conceptMapPath,
   projectLanguagePath,
+  templatesDirPath,
   workflowRelayRootPath,
   workflowStatePath,
   workflowTaskIndexPath,
@@ -63,8 +70,15 @@ function asVerifyOutput(value: unknown): VerifyOutput | undefined {
   return value as VerifyOutput;
 }
 
-function unitOutputs(state: WorkflowState, unitId: string): Partial<Record<RuntimePhase, unknown>> {
+function unitOutputs(state: WorkflowState, unitId: string) {
   return state.outputs[unitId] ?? {};
+}
+
+function asReviewReport(value: unknown): UnitReviewReport | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as UnitReviewReport;
 }
 
 function writeTextFile(relativePath: string, content: string, rootDir = process.cwd()): void {
@@ -95,10 +109,12 @@ function formatLanguageGrounding(value: unknown): string[] {
 
   const lines = [
     `- Language ref: ${grounding.summary.languageRef}`,
+    `- Concept index ref: ${grounding.summary.conceptIndexRef ?? "(missing)"}`,
     `- Vocabulary status: ${grounding.summary.vocabularyStatus}`,
     `- Requires clarification: ${grounding.summary.requiresClarification ? "yes" : "no"}`,
     `- Matched terms: ${grounding.summary.matchedTermCount}`,
     `- Proposed terms: ${grounding.summary.proposedTermCount}`,
+    `- Related Concept Maps: ${grounding.summary.relatedConceptMapCount ?? grounding.relatedConceptMaps?.length ?? 0}`,
     `- Unresolved relations: ${grounding.summary.unresolvedRelationCount}`,
     "",
     "### Matched Terms",
@@ -108,6 +124,14 @@ function formatLanguageGrounding(value: unknown): string[] {
     "",
     "### Proposed Terms",
     ...markdownList(grounding.proposedTerms.map((term) => `${term.id} = ${term.canonical}`)),
+    "",
+    "### Related Concept Maps",
+    ...markdownList(
+      (grounding.relatedConceptMaps ?? []).map((conceptMap) => {
+        const anchors = conceptMap.codeAnchors.length > 0 ? ` anchors=${conceptMap.codeAnchors.join(", ")}` : "";
+        return `${conceptMap.key} -> ${conceptMap.ref} [matched: ${conceptMap.matchedText}; fields: ${conceptMap.matchFields.join(", ")}]${anchors}`;
+      }),
+    ),
     "",
     "### Statements",
     ...markdownList(
@@ -122,6 +146,37 @@ function formatLanguageGrounding(value: unknown): string[] {
   ];
 
   return lines;
+}
+
+function asDocumentRetrieval(value: unknown): DocumentRetrieval | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as DocumentRetrieval;
+}
+
+function formatDocumentRetrieval(value: unknown): string[] {
+  const retrieval = asDocumentRetrieval(value);
+  if (!retrieval) {
+    return ["- (none)"];
+  }
+
+  return [
+    `- Related documents: ${retrieval.related.length}`,
+    `- Approval gaps: ${retrieval.approvalGaps.length}`,
+    "",
+    "### Related Documents",
+    ...markdownList(
+      retrieval.related.map((document) => {
+        const ids = document.traceLinks.map((link) => link.id).slice(0, 6);
+        const idText = ids.length > 0 ? ` ids=${ids.join(", ")}` : "";
+        return `${document.kind.toUpperCase()} ${document.ref} status=${document.approval.status}${idText}`;
+      }),
+    ),
+    "",
+    "### Approval Gaps",
+    ...markdownList(retrieval.approvalGaps.map((document) => `${document.kind.toUpperCase()} ${document.ref} status=${document.approval.status}`)),
+  ];
 }
 
 function formatUnitRuntimeStatus(state: WorkflowState, unit: WorkflowUnit): string {
@@ -195,6 +250,9 @@ function buildUnitBrief(state: WorkflowState, unit: WorkflowUnit): string {
     "## Language Grounding",
     ...formatLanguageGrounding(unit.languageGrounding),
     "",
+    "## Document Context",
+    ...formatDocumentRetrieval(unit.documentContext),
+    "",
     "## Scope",
     ...markdownList(unit.scope ?? []),
     "",
@@ -229,6 +287,9 @@ function buildUnitContext(state: WorkflowState, unit: WorkflowUnit, rootDir = pr
     "",
     "## Grounding Snapshot",
     ...formatLanguageGrounding(unit.languageGrounding),
+    "",
+    "## Document Context",
+    ...formatDocumentRetrieval(unit.documentContext),
     "",
     "## Anchors",
     `- Files: ${(unit.anchors?.filePaths ?? []).join(", ") || "(none)"}`,
@@ -317,6 +378,7 @@ function buildUnitResult(state: WorkflowState, unit: WorkflowUnit): string {
   const clarify = asClarifyOutput(outputs.clarify);
   const execute = asExecuteOutput(outputs.execute);
   const verify = asVerifyOutput(outputs.verify);
+  const reviewReport = asReviewReport(outputs.reviewReport);
 
   const lines = [`# Result for ${unit.id}`, ""];
 
@@ -337,6 +399,29 @@ function buildUnitResult(state: WorkflowState, unit: WorkflowUnit): string {
     lines.push("### Output Files", ...markdownList(execute.outputFiles ?? []), "");
     lines.push("### Artifacts", ...markdownList(execute.artifacts ?? []), "");
     lines.push("### Checks", ...markdownList(execute.checks ?? []), "");
+    lines.push(
+      "### Execution Steps",
+      ...markdownList((execute.executionSteps ?? []).map((step) => `${step.id}: ${step.status} - ${step.evidence}`)),
+      "",
+    );
+    lines.push(
+      "### Example Tests",
+      ...markdownList(
+        (execute.exampleTests ?? []).map((trace) =>
+          `${trace.exampleId} -> ${trace.status}; files=${trace.testFiles.join(", ")}${trace.testNames?.length ? `; names=${trace.testNames.join(", ")}` : ""}`,
+        ),
+      ),
+      "",
+    );
+    lines.push(
+      "### Implementation Links",
+      ...markdownList(
+        (execute.implementationLinks ?? []).map((link) =>
+          `${(link.exampleIds ?? []).join(", ") || "(examples unspecified)"} -> ${link.codeFiles.join(", ")}${link.planIds?.length ? `; plans=${link.planIds.join(", ")}` : ""}${link.notes ? `; ${link.notes}` : ""}`,
+        ),
+      ),
+      "",
+    );
     lines.push("### Handoff Notes", ...markdownList(execute.handoffNotes ?? []), "");
     lines.push("### Notes", ...markdownList(execute.notes ?? []), "");
   } else {
@@ -362,6 +447,16 @@ function buildUnitResult(state: WorkflowState, unit: WorkflowUnit): string {
     lines.push("### Unverified Claims", ...markdownList(verify.unverifiedClaims ?? []), "");
   } else {
     lines.push("## Verify", "(not completed yet)", "");
+  }
+
+  if (reviewReport) {
+    lines.push("## Review Report");
+    lines.push(`- Ref: ${reviewReport.ref}`);
+    lines.push(`- Review ID: ${reviewReport.reviewId}`);
+    lines.push(`- Generated at: ${reviewReport.generatedAt}`);
+    lines.push("", "### Gaps", ...markdownList(reviewReport.gaps), "");
+  } else {
+    lines.push("## Review Report", "(not generated yet)", "");
   }
 
   return `${lines.join("\n")}\n`;
@@ -397,6 +492,9 @@ function buildUnitBaton(state: WorkflowState, unit: WorkflowUnit): string {
     "",
     "## Handoff Notes",
     ...markdownList(execute?.handoffNotes ?? []),
+    "",
+    "## Review Report",
+    asReviewReport(outputs.reviewReport)?.ref ?? "(not generated yet)",
     "",
     "## Downstream Units",
     ...markdownList(downstreamUnits.map((candidate) => `${candidate.id} -> ${unitBriefPath(state.workflowId, candidate.id)}`)),
@@ -487,5 +585,10 @@ export {
   unitResultPath,
   unitBatonPath,
   unitRelayPath,
+  unitReviewReportPath,
   projectLanguagePath,
+  conceptIndexPath,
+  conceptsDirPath,
+  conceptMapPath,
+  templatesDirPath,
 };

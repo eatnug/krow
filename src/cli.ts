@@ -34,11 +34,10 @@ import type {
   LanguageNamespace,
   LocalControlCommandName,
   RequestAnchors,
-  RouteConfidence,
   RouteDecision,
   RouteKind,
-  RouteSource,
   RuntimePhase,
+  UnitReviewReport,
   WorkflowEffort,
   WorkflowGraphStrategy,
   WorkflowPriority,
@@ -47,6 +46,15 @@ import type {
 } from "./types.js";
 import { validateWorkflowState } from "./validators.js";
 import { completedUnitIds, readyUnits } from "./workflow-graph.js";
+import {
+  deriveTraceOverview,
+  findRelatedDocuments,
+  scanKrowDocuments,
+  type DocumentRetrieval,
+  type KrowDocumentSummary,
+} from "./document-contracts.js";
+import { executionContractFromRetrieval } from "./execution-contracts.js";
+import { writeUnitReviewReport } from "./review-report.js";
 
 type FlagMap = Record<string, string | boolean>;
 
@@ -67,36 +75,15 @@ type LocalControlCommandOutput = {
   capabilityPolicy: CapabilityPolicy;
 };
 
-const workPatterns = [
-  /\b(fix|implement|build|create|add|remove|delete|rename|refactor|update|edit|change|write|ship|debug)\b/i,
-  /(고쳐|수정|만들|추가|삭제|지워|바꿔|리팩터|구현|작성|디버그|해결)/,
-];
-
-const questionPatterns = [
-  /\?\s*$/,
-  /^\s*(what|why|how|explain|describe|tell me|can you explain)\b/i,
-  /^\s*(뭐|무엇|왜|어떻게|설명|알려줘)\b/,
-];
-
-const pathLikeAnchorPattern = /(?:^|[\s(])(?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+/i;
-const pathLikePattern = /(?:^|[\s(])((?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+)/gi;
-const rootFileAnchorPattern =
-  /\b(?:(?:AGENTS|CLAUDE|README|CHANGELOG|Cargo|Makefile|Dockerfile)(?:\.[A-Za-z0-9_.-]+)?|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[A-Za-z0-9_.-]+)?\.json|vite\.config\.[A-Za-z0-9_.-]+|vitest\.config\.[A-Za-z0-9_.-]+|jest\.config\.[A-Za-z0-9_.-]+)\b/i;
-
-const anchorPatterns = [
-  pathLikeAnchorPattern,
-  rootFileAnchorPattern,
-  /\b[A-Z][A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?\b/,
-  /\b(?:error|exception|stack trace|test|failing|regression|bug)\b/i,
-  /(에러|오류|테스트|버그|실패|회귀)/,
-];
-
+const pathLikePattern = /(?:^|[\s(`])((?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+)/gi;
 const rootFilePattern =
   /\b((?:AGENTS|CLAUDE|README|CHANGELOG|Cargo|Makefile|Dockerfile)(?:\.[A-Za-z0-9_.-]+)?|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[A-Za-z0-9_.-]+)?\.json|vite\.config\.[A-Za-z0-9_.-]+|vitest\.config\.[A-Za-z0-9_.-]+|jest\.config\.[A-Za-z0-9_.-]+)\b/g;
-const symbolPattern = /\b([A-Z][A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?)\b/g;
+const codeSpanPattern = /`([^`\n]+)`/g;
+const symbolPattern =
+  /\b([A-Z][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)?|[a-z][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)?|[A-Z][A-Z0-9_]{2,}(?:\.[A-Za-z0-9_]+)?)\b/g;
 const ticketPattern = /\b(?:[A-Z]+-\d+|#\d+)\b/g;
 const errorPattern =
-  /\b((?:TypeError|ReferenceError|SyntaxError|Error|Exception|stack trace|failing test|test failure|bug|regression)[^,.;\n]*)/gi;
+  /\b((?:TypeError|ReferenceError|SyntaxError|Error|Exception|stack trace|failing test|test failure)[^,.;\n]*)/gi;
 const testPattern = /\b([A-Za-z0-9_./-]*(?:test|spec)\.[A-Za-z0-9_.-]+)\b/gi;
 const verificationCommandPattern =
   /\b((?:cargo\s+(?:test|check|clippy|build)|(?:npm|pnpm|yarn|bun)\s+(?:(?:run|exec)\s+)?(?:test|typecheck|check|lint|build)|uv\s+run\s+(?:pytest|ruff|mypy|pyright)[^\n,;]*|pytest[^\n,;]*|go\s+test[^\n,;]*|swift\s+test[^\n,;]*|dotnet\s+test[^\n,;]*|mvn\s+test[^\n,;]*|(?:\.\/)?gradlew\s+test[^\n,;]*|xcodebuild\s+test[^\n,;]*|npx\s+(?:playwright\s+test|vitest|jest|tsc\s+--noEmit)[^\n,;]*)[^\n,;]*)/gi;
@@ -143,8 +130,10 @@ const proseSymbolStopWords = new Set([
 ]);
 
 const localControlDescriptions: Record<LocalControlCommandName, string> = {
-  route: "Classify a message as chat or work without creating workflow state.",
+  route: "Resolve explicit chat or work intent without creating workflow state.",
   intake: "Produce an intake plan and missing-context analysis without creating workflow state.",
+  documents: "Scan krow Markdown documents, approval sections, and derived trace ids.",
+  review: "Derive a Review Report from workflow documents, execution traces, and verification output.",
   start: "Create workflow state from a message and emit the first control signal.",
   status: "Read workflow state and return a local summary.",
   next: "Read workflow state and emit the next control signal.",
@@ -170,9 +159,11 @@ function printUsage(): void {
   process.stdout.write(
     [
       "Usage:",
-      "  route <message> [--intent <work|chat>] [--allow-heuristics]",
-      "  intake <message> [--intent <work|chat>] [--allow-heuristics]",
-      "  start <message> [--intent <work|chat>] [--allow-heuristics] [--capture] [--mode <name>] [--root <dir>]",
+      "  route <message> [--intent <work|chat>]",
+      "  intake <message> [--intent <work|chat>]",
+      "  documents [message] [--root <dir>]",
+      "  review <workflowId> [unitId] [--root <dir>]",
+      "  start <message> [--intent <work|chat>] [--capture] [--mode <name>] [--root <dir>]",
       "  status <workflowId> [--root <dir>]",
       "  next <workflowId> [--root <dir>]",
       "  resume <workflowId> [--root <dir>]",
@@ -302,27 +293,22 @@ function extractSymbols(message: string): string[] {
   return captureAll(message, symbolPattern).filter((symbol) => !proseSymbolStopWords.has(symbol));
 }
 
+function looksLikeFilePath(value: string): boolean {
+  rootFilePattern.lastIndex = 0;
+  return /^(?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+$/.test(value) || rootFilePattern.test(value);
+}
+
+function looksLikeTestPath(value: string): boolean {
+  return /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(value);
+}
+
 function cleanMessage(message: string): string {
   return message.trim();
 }
 
-function scorePatterns(message: string, patterns: RegExp[]): number {
-  return patterns.reduce((score, pattern) => score + (pattern.test(message) ? 1 : 0), 0);
-}
-
-function confidenceFromScore(score: number): RouteConfidence {
-  if (score >= 3) {
-    return "high";
-  }
-  if (score === 2) {
-    return "medium";
-  }
-  return "low";
-}
-
 function routeRequest(
   message: string,
-  options?: { explicitIntent?: RouteKind; allowHeuristics?: boolean },
+  options?: { explicitIntent?: RouteKind },
 ): RouteDecision {
   const normalizedMessage = cleanMessage(message);
   const reasons: string[] = [];
@@ -333,7 +319,7 @@ function routeRequest(
       rawMessage: message,
       normalizedMessage,
       kind: "work",
-      source: "explicit" as RouteSource,
+      source: "explicit",
       confidence: "high",
       forced: true,
       reasons,
@@ -346,52 +332,35 @@ function routeRequest(
       rawMessage: message,
       normalizedMessage,
       kind: "chat",
-      source: "explicit" as RouteSource,
+      source: "explicit",
       confidence: "high",
       forced: false,
       reasons,
     };
   }
 
-  if (!options?.allowHeuristics) {
-    reasons.push("no explicit work intent was provided");
-    return {
-      rawMessage: message,
-      normalizedMessage,
-      kind: "chat",
-      source: "heuristic" as RouteSource,
-      confidence: "high",
-      forced: false,
-      reasons,
-    };
-  }
-
-  const workScore =
-    scorePatterns(normalizedMessage, workPatterns) + scorePatterns(normalizedMessage, anchorPatterns);
-  const chatScore = scorePatterns(normalizedMessage, questionPatterns);
-  let kind: RouteKind = "chat";
-
-  if (workScore > chatScore) {
-    kind = "work";
-    reasons.push("contains delivery-oriented verbs or concrete anchors");
-  } else {
-    reasons.push("looks more like a question or discussion");
-  }
-
+  reasons.push("no explicit intent was provided");
   return {
     rawMessage: message,
     normalizedMessage,
-    kind,
-    source: "heuristic" as RouteSource,
-    confidence: confidenceFromScore(Math.max(workScore, chatScore)),
+    kind: "chat",
+    source: "default",
+    confidence: "high",
     forced: false,
     reasons,
   };
 }
 
 function extractAnchors(message: string): RequestAnchors {
-  const filePaths = unique([...captureAll(message, pathLikePattern), ...captureAll(message, rootFilePattern)]);
-  const tests = captureAll(message, testPattern);
+  const codeSpans = captureAll(message, codeSpanPattern);
+  const codeSpanPaths = codeSpans.filter(looksLikeFilePath);
+  const codeSpanSymbols = codeSpans.filter((value) => !looksLikeFilePath(value) && !value.includes(" "));
+  const filePaths = unique([
+    ...captureAll(message, pathLikePattern),
+    ...captureAll(message, rootFilePattern),
+    ...codeSpanPaths,
+  ]);
+  const tests = unique([...captureAll(message, testPattern), ...codeSpanPaths.filter(looksLikeTestPath)]);
   const verificationSurfaces = unique([
     ...tests,
     ...captureAll(message, verificationCommandPattern),
@@ -400,7 +369,7 @@ function extractAnchors(message: string): RequestAnchors {
 
   return {
     filePaths,
-    symbols: extractSymbols(message).filter((symbol) => !filePaths.includes(symbol)),
+    symbols: unique([...extractSymbols(message), ...codeSpanSymbols]).filter((symbol) => !filePaths.includes(symbol)),
     errors: captureAll(message, errorPattern),
     tests,
     verificationSurfaces,
@@ -423,12 +392,89 @@ function hasVerificationSurface(anchors: RequestAnchors): boolean {
   return anchors.tests.length > 0 || anchors.verificationSurfaces.length > 0;
 }
 
-function looksGeneric(message: string): boolean {
-  const trimmed = message.trim();
-  if (trimmed.length < 12) {
-    return true;
+function codeAnchorTarget(anchor: string): string {
+  const code = anchor.match(/`([^`]+)`/)?.[1];
+  if (code) {
+    return code.trim();
   }
-  return /^(fix it|do it|work on this|handle this|좀 해줘|이거 해줘|고쳐줘)$/i.test(trimmed);
+
+  const afterLabel = anchor.match(/^[A-Za-z][A-Za-z ]{1,30}:\s*(.+)$/)?.[1];
+  return (afterLabel ?? anchor).trim();
+}
+
+function normalizeConceptToken(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function conceptSearchTexts(languageGrounding: LanguageGrounding): string[] {
+  return unique(
+    languageGrounding.relatedConceptMaps.flatMap((conceptMap) => [
+      conceptMap.key,
+      conceptMap.title,
+      ...conceptMap.aliases,
+      ...conceptMap.relatedConcepts,
+    ]),
+  );
+}
+
+function symbolIsConceptToken(symbol: string, languageGrounding: LanguageGrounding): boolean {
+  const normalizedSymbol = normalizeConceptToken(symbol);
+  if (!normalizedSymbol) {
+    return false;
+  }
+
+  return conceptSearchTexts(languageGrounding)
+    .map(normalizeConceptToken)
+    .some((text) => text.split(" ").includes(normalizedSymbol));
+}
+
+function enrichAnchorsWithConceptMaps(anchors: RequestAnchors, languageGrounding: LanguageGrounding): RequestAnchors {
+  const conceptTargets = unique(
+    languageGrounding.relatedConceptMaps.flatMap((conceptMap) => conceptMap.codeAnchors.map(codeAnchorTarget)),
+  );
+  if (conceptTargets.length === 0) {
+    return {
+      ...anchors,
+      symbols: anchors.symbols.filter((symbol) => !symbolIsConceptToken(symbol, languageGrounding)),
+    };
+  }
+
+  return {
+    ...anchors,
+    filePaths: unique([...anchors.filePaths, ...conceptTargets]),
+    symbols: anchors.symbols.filter((symbol) => !symbolIsConceptToken(symbol, languageGrounding)),
+    tests: unique([...anchors.tests, ...conceptTargets.filter((target) => /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(target))]),
+    verificationSurfaces: unique([
+      ...anchors.verificationSurfaces,
+      ...conceptTargets.filter((target) => /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(target)),
+    ]),
+  };
+}
+
+function documentConceptKeys(languageGrounding: LanguageGrounding | undefined): string[] {
+  if (!languageGrounding) {
+    return [];
+  }
+  return unique([
+    ...languageGrounding.relatedConceptMaps.flatMap((conceptMap) => [
+      conceptMap.key,
+      ...conceptMap.relatedConcepts,
+      ...conceptMap.aliases,
+    ]),
+    ...languageGrounding.matchedTerms
+      .filter((term) => term.namespace === "project")
+      .flatMap((term) => [term.id, term.canonical, ...term.aliases]),
+    ...languageGrounding.proposedTerms.map((term) => term.canonical),
+  ]);
+}
+
+function lacksSpecificRequest(message: string): boolean {
+  const trimmed = message.trim();
+  return trimmed.length < 12;
 }
 
 function maybeAdd(intents: CapabilityIntent[], intent: CapabilityIntent): void {
@@ -499,10 +545,7 @@ function inferUnitPriority(objective: string, anchors: RequestAnchors, kind: Wor
   if (anchors.errors.length > 0 || hasVerificationSurface(anchors) || anchors.tickets.length > 0) {
     return "high";
   }
-  if (looksLikeFix(objective) || looksLikeCreate(objective)) {
-    return "medium";
-  }
-  return "low";
+  return objective.trim() ? "medium" : "low";
 }
 
 function inferUnitEffort(objective: string, scope: string[], dependencies: string[], kind: WorkflowUnit["kind"]): WorkflowEffort {
@@ -512,7 +555,7 @@ function inferUnitEffort(objective: string, scope: string[], dependencies: strin
   if (dependencies.length > 0 || scope.length >= 4) {
     return "large";
   }
-  if (scope.length >= 2 || /\b(migrate|refactor|redesign|restructure|cross-cutting)\b/i.test(objective)) {
+  if (scope.length >= 2 || objective.length > 240) {
     return "medium";
   }
   return "small";
@@ -524,14 +567,6 @@ function inferAcceptanceCriteria(objective: string, anchors: RequestAnchors, sco
   if (kind === "integration") {
     criteria.push("Cross-unit interfaces and shared surfaces still align after all upstream units complete.");
     criteria.push("The final user-facing result matches the original request rather than only isolated slices.");
-  }
-
-  if (looksLikeFix(objective)) {
-    criteria.push("The reported symptom or failing behavior is no longer reproducible on the scoped surface.");
-  }
-
-  if (looksLikeCreate(objective)) {
-    criteria.push("The requested behavior or artifact exists on the intended surface and stays bounded to this unit.");
   }
 
   if (hasVerificationSurface(anchors)) {
@@ -547,7 +582,7 @@ function inferAcceptanceCriteria(objective: string, anchors: RequestAnchors, sco
   return unique(criteria);
 }
 
-function inferSharedRisks(objective: string, anchors: RequestAnchors, scope: string[], kind: WorkflowUnit["kind"]): string[] {
+function inferSharedRisks(anchors: RequestAnchors, scope: string[], kind: WorkflowUnit["kind"]): string[] {
   const risks: string[] = [];
 
   if (kind === "integration") {
@@ -555,9 +590,6 @@ function inferSharedRisks(objective: string, anchors: RequestAnchors, scope: str
   }
   if (anchors.errors.length > 0) {
     risks.push("A narrow fix can mask the symptom without proving the underlying failure surface is covered.");
-  }
-  if (!hasVerificationSurface(anchors) && (looksLikeFix(objective) || looksLikeCreate(objective))) {
-    risks.push("Verification surface is implicit, so clarify must lock down what proves the result.");
   }
   if (scope.some((item) => /(?:package\.json|tsconfig|vite\.config|eslint|prettier|pnpm-lock|package-lock|yarn\.lock)/i.test(item))) {
     risks.push("Config or toolchain changes can affect sibling units outside the local scope.");
@@ -586,7 +618,7 @@ function enrichUnit(
     priority: unit.priority ?? inferUnitPriority(objective, anchors, kind),
     estimatedEffort: unit.estimatedEffort ?? inferUnitEffort(objective, scope, dependsOn, kind),
     mergeRequired: unit.mergeRequired ?? graphStrategy !== "single",
-    sharedRisks: unit.sharedRisks ?? inferSharedRisks(objective, anchors, scope, kind),
+    sharedRisks: unit.sharedRisks ?? inferSharedRisks(anchors, scope, kind),
     acceptanceCriteria: unit.acceptanceCriteria ?? inferAcceptanceCriteria(objective, anchors, scope, kind),
   };
 }
@@ -749,32 +781,17 @@ function carveWorkflowUnits(
   };
 }
 
-function hasAcceptanceSignal(message: string): boolean {
-  return (
-    /\b(should|must|expected|acceptance|done when|success means|result should)\b/i.test(message) ||
-    /(되어야|해야 한다|기대 결과|완료 조건|성공 조건)/.test(message)
-  );
-}
-
-function looksLikeFix(objective: string): boolean {
-  return (
-    /\b(fix|debug|bug|regression|error|exception|failing)\b/i.test(objective) ||
-    /(버그|에러|오류|디버그|실패|회귀)/.test(objective)
-  );
-}
-
-function looksLikeCreate(objective: string): boolean {
-  return /\b(create|build|implement|add|ship|feature)\b/i.test(objective) || /(만들|구현|추가)/.test(objective);
-}
-
-function looksLikeRemoval(objective: string): boolean {
-  return /\b(remove|delete)\b/i.test(objective) || /(삭제|지워)/.test(objective);
-}
-
 function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakePlan {
   const objective = summarizeObjective(route.normalizedMessage);
-  const anchors = extractAnchors(route.normalizedMessage);
+  let anchors = extractAnchors(route.normalizedMessage);
   const languageGrounding = route.kind === "work" ? groundRequestLanguage(route.normalizedMessage, rootDir) : undefined;
+  if (languageGrounding) {
+    anchors = enrichAnchorsWithConceptMaps(anchors, languageGrounding);
+  }
+  const documentRetrieval: DocumentRetrieval | undefined =
+    route.kind === "work"
+      ? findRelatedDocuments(scanKrowDocuments(rootDir), objective, documentConceptKeys(languageGrounding))
+      : undefined;
   const intents: CapabilityIntent[] = [];
   const notes: string[] = [];
   const missingEvidence: string[] = [];
@@ -802,7 +819,11 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
       kind: "inspect_docs",
       priority: "high",
       reason: "ground the request in the approved project language before implementation",
-      targets: [languageGrounding.summary.languageRef],
+      targets: unique([
+        languageGrounding.summary.languageRef,
+        languageGrounding.summary.conceptIndexRef,
+        ...languageGrounding.relatedConceptMaps.map((conceptMap) => conceptMap.ref),
+      ]),
     });
 
     if (languageGrounding.summary.requiresClarification) {
@@ -810,6 +831,23 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
         "resolve proposed or unresolved vocabulary during clarify from repository evidence; ask the user only when repository evidence conflicts or product behavior remains ambiguous",
       );
     }
+  }
+
+  if (documentRetrieval && documentRetrieval.related.length > 0) {
+    notes.push(
+      `related intent documents found: ${documentRetrieval.related.map((document) => document.ref).join(", ")}`,
+    );
+    maybeAdd(intents, {
+      kind: "inspect_docs",
+      priority: "high",
+      reason: "load related PRD, plan, examples, or review docs before implementation",
+      targets: documentRetrieval.related.map((document) => document.ref),
+    });
+  }
+
+  if (documentRetrieval && documentRetrieval.approvalGaps.length > 0) {
+    notes.push("related PRD or Plan documents are not approved; implementation should wait for approval");
+    missingEvidence.push("PRD/Plan approval");
   }
 
   maybeAdd(intents, {
@@ -838,64 +876,24 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
     });
   }
 
-  if (anchors.errors.length > 0 || looksLikeFix(objective)) {
+  if (anchors.errors.length > 0) {
     maybeAdd(intents, {
       kind: "inspect_logs",
       priority: "high",
-      reason: "the request sounds failure-oriented and should start from evidence",
+      reason: "the request includes explicit failure evidence",
       targets: anchors.errors,
     });
     maybeAdd(intents, {
       kind: "inspect_tests",
       priority: "medium",
-      reason: "failing behavior often has existing tests or needs a check surface",
+      reason: "explicit failure evidence should be checked against existing tests or a reproduction surface",
       targets: unique([...anchors.tests, ...anchors.verificationSurfaces]),
     });
   }
 
-  if (looksLikeCreate(objective)) {
-    maybeAdd(intents, {
-      kind: "inspect_config",
-      priority: "medium",
-      reason: "new work should respect existing project boundaries and tooling",
-    });
-    maybeAdd(intents, {
-      kind: "inspect_tests",
-      priority: "medium",
-      reason: "new work should identify the likely verification surface early",
-      targets: unique([...anchors.tests, ...anchors.verificationSurfaces]),
-    });
-  }
-
-  if (looksGeneric(objective)) {
-    questions.push("What exact target should this work affect?");
+  if (lacksSpecificRequest(objective)) {
     notes.push("request is too generic to start safely without at least one concrete target");
     missingEvidence.push("exact target");
-  }
-
-  if (!hasAcceptanceSignal(objective)) {
-    questions.push("What exact outcome should be considered correct when this work is done?");
-    missingEvidence.push("acceptance criteria");
-  }
-
-  if ((looksLikeFix(objective) || looksLikeCreate(objective)) && !hasVerificationSurface(anchors)) {
-    questions.push("What concrete test, reproduction, or verification surface should prove the result is correct?");
-    missingEvidence.push("verification surface");
-  }
-
-  if (looksLikeFix(objective) && anchors.errors.length === 0) {
-    questions.push("What exact symptom, failing case, or error should be fixed?");
-    missingEvidence.push("failure evidence or reproduction target");
-  }
-
-  if (looksLikeCreate(objective) && anchors.filePaths.length === 0 && anchors.symbols.length === 0) {
-    questions.push("Which existing surface should this be added to, or what new surface should be created?");
-    missingEvidence.push("implementation boundary");
-  }
-
-  if (looksLikeRemoval(objective) && anchors.filePaths.length === 0 && anchors.symbols.length === 0) {
-    questions.push("What exact code, file, behavior, or configuration should be removed?");
-    missingEvidence.push("removal target");
   }
 
   if (questions.length > 0) {
@@ -905,11 +903,18 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
 
   const baseQuestions = unique(questions);
   const carved = carveWorkflowUnits(route, objective, anchors, intents, notes, languageGrounding);
+  const proposedUnits = documentRetrieval
+    ? carved.proposedUnits.map((unit) => ({
+        ...unit,
+        documentContext: visibleDocumentRetrieval(documentRetrieval),
+        executionContract: executionContractFromRetrieval(documentRetrieval),
+      }))
+    : carved.proposedUnits;
   const intentLock = baseQuestions.length > 0
     ? buildIntentLock(
         objective,
         anchors,
-        carved.proposedUnits,
+        proposedUnits,
         carved.graphStrategy,
         unique(missingEvidence),
         languageGrounding,
@@ -925,7 +930,7 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
     languageGrounding,
     intentLock,
     intents,
-    proposedUnits: carved.proposedUnits,
+    proposedUnits,
     graphStrategy: carved.graphStrategy,
     graphNotes: carved.graphNotes,
     missingEvidence: unique(missingEvidence),
@@ -1055,6 +1060,20 @@ function resolvePhasePolicy(phase: RuntimePhase): CapabilityPolicy {
 
 function resolveControlPolicy(commandName: LocalControlCommandName): CapabilityPolicy {
   switch (commandName) {
+    case "review":
+      return createPolicy(
+        "control:review",
+        "control",
+        ["inspect_docs", "read_state", "write_state"],
+        ["local control command only", "derives a review report from stored workflow evidence"],
+      );
+    case "documents":
+      return createPolicy(
+        "control:documents",
+        "control",
+        ["inspect_docs"],
+        ["local control command only", "reads krow Markdown documents and derived trace metadata"],
+      );
     case "route":
     case "intake":
       return createPolicy(
@@ -1202,6 +1221,7 @@ function buildIntentLock(
   const coreTerms = summarizeNamespaceTerms(languageGrounding, "core");
   const techTerms = summarizeNamespaceTerms(languageGrounding, "tech");
   const projectTerms = summarizeNamespaceTerms(languageGrounding, "project");
+  const conceptMaps = (languageGrounding?.relatedConceptMaps ?? []).map((conceptMap) => conceptMap.key).slice(0, 6);
   const unresolvedTerms = summarizeProposedTerms(languageGrounding);
   const lines = [
     `Objective: ${objective}`,
@@ -1229,6 +1249,10 @@ function buildIntentLock(
 
   if (projectTerms.length > 0) {
     lines.push(`Grounded project terms: ${projectTerms.join(", ")}`);
+  }
+
+  if (conceptMaps.length > 0) {
+    lines.push(`Related Project Concept Maps: ${conceptMaps.join(", ")}`);
   }
 
   if (unresolvedTerms.length > 0) {
@@ -1300,7 +1324,6 @@ function startFromMessage(input: {
   message: string;
   mode?: string;
   explicitIntent?: RouteKind;
-  allowHeuristics?: boolean;
   captureEnabled?: boolean;
   maxVerifyAttempts?: number;
   rootDir?: string;
@@ -1308,7 +1331,6 @@ function startFromMessage(input: {
 }): StartFromMessageResult {
   const route = routeRequest(input.message, {
     explicitIntent: input.explicitIntent,
-    allowHeuristics: input.allowHeuristics ?? false,
   });
   const intake = buildIntakePlan(route, input.rootDir);
   const entryPolicy = resolveEntryPolicy(route);
@@ -1410,7 +1432,6 @@ function handleRoute(args: string[], flags: FlagMap): void {
     control: getLocalControlCommand("route"),
     route: routeRequest(message, {
       explicitIntent: parseIntentFlag(flags),
-      allowHeuristics: flags["allow-heuristics"] === true,
     }),
   });
 }
@@ -1420,7 +1441,6 @@ function handleIntake(args: string[], flags: FlagMap): void {
   const result = startFromMessage({
     message,
     explicitIntent: parseIntentFlag(flags),
-    allowHeuristics: flags["allow-heuristics"] === true,
     rootDir: rootDir(flags),
   });
 
@@ -1433,12 +1453,76 @@ function handleIntake(args: string[], flags: FlagMap): void {
   });
 }
 
+function visibleDocumentSummary(document: KrowDocumentSummary) {
+  return {
+    kind: document.kind,
+    ref: document.ref,
+    title: document.title,
+    approval: document.approval,
+    concepts: document.concepts,
+    traceLinks: document.traceLinks,
+  };
+}
+
+function visibleDocumentRetrieval(retrieval: DocumentRetrieval) {
+  return {
+    related: retrieval.related.map(visibleDocumentSummary),
+    approvalGaps: retrieval.approvalGaps.map(visibleDocumentSummary),
+  };
+}
+
+function handleDocuments(args: string[], flags: FlagMap): void {
+  const message = args.join(" ").trim();
+  const documents = scanKrowDocuments(rootDir(flags));
+  const languageGrounding = message ? groundRequestLanguage(message, rootDir(flags)) : undefined;
+  const retrieval = message
+    ? findRelatedDocuments(documents, message, documentConceptKeys(languageGrounding))
+    : undefined;
+
+  outputJSON({
+    control: getLocalControlCommand("documents"),
+    documents: {
+      prds: documents.prds.map(visibleDocumentSummary),
+      plans: documents.plans.map(visibleDocumentSummary),
+      examples: documents.examples.map(visibleDocumentSummary),
+      reviews: documents.reviews.map(visibleDocumentSummary),
+      totalCount: documents.all.length,
+    },
+    traceOverview: deriveTraceOverview(documents),
+    related: retrieval?.related.map(visibleDocumentSummary) ?? [],
+    approvalGaps: retrieval
+      ? retrieval.approvalGaps.map(visibleDocumentSummary)
+      : documents.all
+          .filter((document) => (document.kind === "prd" || document.kind === "plan") && document.approval.status !== "approved")
+          .map(visibleDocumentSummary),
+  });
+}
+
+function handleReview(args: string[], flags: FlagMap): void {
+  const [workflowId, requestedUnitId] = args;
+  if (!workflowId) {
+    throw new Error("review requires <workflowId> [unitId]");
+  }
+
+  const state = loadValidatedWorkflowState(workflowId, flags);
+  const unitId = requestedUnitId || state.units[state.currentUnitIndex]?.id;
+  if (!unitId) {
+    throw new Error("review could not determine a unit id");
+  }
+
+  const report = writeUnitReviewReport(state, unitId, rootDir(flags));
+  saveWorkflowState(state, rootDir(flags));
+  outputJSON({
+    control: getLocalControlCommand("review"),
+    reviewReport: report,
+  });
+}
+
 function handleStart(args: string[], flags: FlagMap): void {
   const message = requireMessage(args, "start");
   const result = startFromMessage({
     message,
     explicitIntent: parseIntentFlag(flags),
-    allowHeuristics: flags["allow-heuristics"] === true,
     captureEnabled: flags.capture === true,
     mode: typeof flags.mode === "string" ? flags.mode : undefined,
     rootDir: rootDir(flags),
@@ -1507,7 +1591,12 @@ function handleSubmitPhase(args: string[], flags: FlagMap): void {
   }
 
   const state = loadValidatedWorkflowState(workflowId, flags);
+  const submittedUnitId = state.units[state.currentUnitIndex]?.id;
   const result = applyPhaseOutput(state, phase, readJsonInput(inputValue));
+  let reviewReport: UnitReviewReport | undefined;
+  if (phase === "verify" && result.state && submittedUnitId) {
+    reviewReport = writeUnitReviewReport(result.state, submittedUnitId, rootDir(flags));
+  }
   if (result.state) {
     saveWorkflowState(result.state, rootDir(flags));
   }
@@ -1515,6 +1604,7 @@ function handleSubmitPhase(args: string[], flags: FlagMap): void {
   outputJSON({
     control: getLocalControlCommand("submit-phase"),
     signal: result.signal,
+    reviewReport,
   });
 }
 
@@ -1571,6 +1661,12 @@ function main(): void {
       return;
     case "intake":
       handleIntake(positionals, flags);
+      return;
+    case "documents":
+      handleDocuments(positionals, flags);
+      return;
+    case "review":
+      handleReview(positionals, flags);
       return;
     case "start":
       handleStart(positionals, flags);

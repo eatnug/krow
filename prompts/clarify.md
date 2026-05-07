@@ -9,10 +9,12 @@ Make the current unit concrete enough to execute safely and verify cleanly.
 ## Responsibilities
 
 - read the task packet's Language Grounding section before naming scope
+- read related Project Concept Maps and their Code Anchors when the task packet lists them
 - read any recorded decision answers from the workflow state/context before asking for new input
 - keep core/software terms, tech terms, and project terms as separate vocabulary sources
 - do not treat language grounding as a layer-by-layer translation map
 - resolve proposed or unresolved project terms before execution changes files
+- treat Project Concept Maps as retrieval guides, not as a complete dependency graph
 - use repository evidence to resolve language grounding before asking the user
 - do not ask the user to classify terms as canonical, alias, or discarded unless repository evidence contains a real conflict that affects product behavior
 - restate the exact target in narrow terms

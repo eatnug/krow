@@ -1,4 +1,5 @@
 import type { VerifyOutput, WorkflowGraphStrategy, WorkflowState, WorkflowUnit } from "./types.js";
+import { executionContractForUnit } from "./execution-contracts.js";
 import {
   unitBatonPath,
   unitBriefPath,
@@ -83,6 +84,7 @@ function compactUnit(unit: WorkflowUnit): Record<string, unknown> {
       unit.languageGrounding && typeof unit.languageGrounding === "object"
         ? (unit.languageGrounding as Record<string, unknown>).summary
         : undefined,
+    executionContract: executionContractForUnit(unit),
   };
 }
 

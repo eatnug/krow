@@ -26,6 +26,12 @@ const validStatuses: WorkflowStatus[] = [
 
 const validPhases: RuntimePhase[] = ["clarify", "execute", "verify", "capture"];
 const validScoreKeys = ["accuracy", "completeness", "consistency"] as const;
+const validExecutionStepIds = [
+  "tests-from-examples",
+  "run-tests-before-code",
+  "implement-code",
+  "run-tests-after-code",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -190,6 +196,28 @@ function validateDecisionPrompts(value: unknown, path: string): string[] {
     if (!isNonEmptyString(item.question)) {
       issues.push(`${itemPath}.question must be a non-empty string`);
     }
+    if (item.context !== undefined && !isNonEmptyString(item.context)) {
+      issues.push(`${itemPath}.context must be a non-empty string when present`);
+    }
+    if (item.kind !== undefined && item.kind !== "clarify" && item.kind !== "approval") {
+      issues.push(`${itemPath}.kind must be 'clarify' or 'approval' when present`);
+    }
+    if (item.target !== undefined) {
+      if (!isRecord(item.target)) {
+        issues.push(`${itemPath}.target must be an object when present`);
+      } else {
+        const target = item.target as Record<string, unknown>;
+        if (target.kind !== "prd" && target.kind !== "plan" && target.kind !== "language" && target.kind !== "scope") {
+          issues.push(`${itemPath}.target.kind must be 'prd', 'plan', 'language', or 'scope' when present`);
+        }
+        if (!isNonEmptyString(target.ref)) {
+          issues.push(`${itemPath}.target.ref must be a non-empty string when present`);
+        }
+        if (target.status !== undefined && !isNonEmptyString(target.status)) {
+          issues.push(`${itemPath}.target.status must be a non-empty string when present`);
+        }
+      }
+    }
     if (!Array.isArray(item.options) || item.options.length === 0) {
       issues.push(`${itemPath}.options must be a non-empty array`);
       return;
@@ -241,6 +269,84 @@ function validateVerifyIssues(value: unknown, path: string): string[] {
     }
   });
 
+  return issues;
+}
+
+function validateExecutionSteps(value: unknown, path: string): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(value)) {
+    return [`${path} must be an array`];
+  }
+  value.forEach((step, index) => {
+    const stepPath = `${path}[${index}]`;
+    if (!isRecord(step)) {
+      issues.push(`${stepPath} must be an object`);
+      return;
+    }
+    if (!validExecutionStepIds.includes(step.id as (typeof validExecutionStepIds)[number])) {
+      issues.push(`${stepPath}.id must be a canonical execution step id`);
+    }
+    if (step.status !== "completed" && step.status !== "skipped" && step.status !== "blocked") {
+      issues.push(`${stepPath}.status must be 'completed', 'skipped', or 'blocked'`);
+    }
+    if (!isNonEmptyString(step.evidence)) {
+      issues.push(`${stepPath}.evidence must be a non-empty string`);
+    }
+  });
+  return issues;
+}
+
+function validateExampleTests(value: unknown, path: string): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(value)) {
+    return [`${path} must be an array`];
+  }
+  value.forEach((trace, index) => {
+    const tracePath = `${path}[${index}]`;
+    if (!isRecord(trace)) {
+      issues.push(`${tracePath} must be an object`);
+      return;
+    }
+    if (!isNonEmptyString(trace.exampleId)) {
+      issues.push(`${tracePath}.exampleId must be a non-empty string`);
+    }
+    if (!isStringArray(trace.testFiles)) {
+      issues.push(`${tracePath}.testFiles must be an array of non-empty strings`);
+    }
+    if (trace.testNames !== undefined && !isStringArray(trace.testNames)) {
+      issues.push(`${tracePath}.testNames must be an array of non-empty strings when present`);
+    }
+    if (trace.status !== "created" && trace.status !== "updated" && trace.status !== "existing") {
+      issues.push(`${tracePath}.status must be 'created', 'updated', or 'existing'`);
+    }
+  });
+  return issues;
+}
+
+function validateImplementationLinks(value: unknown, path: string): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(value)) {
+    return [`${path} must be an array`];
+  }
+  value.forEach((link, index) => {
+    const linkPath = `${path}[${index}]`;
+    if (!isRecord(link)) {
+      issues.push(`${linkPath} must be an object`);
+      return;
+    }
+    if (!isStringArray(link.codeFiles)) {
+      issues.push(`${linkPath}.codeFiles must be an array of non-empty strings`);
+    }
+    if (link.exampleIds !== undefined && !isStringArray(link.exampleIds)) {
+      issues.push(`${linkPath}.exampleIds must be an array of non-empty strings when present`);
+    }
+    if (link.planIds !== undefined && !isStringArray(link.planIds)) {
+      issues.push(`${linkPath}.planIds must be an array of non-empty strings when present`);
+    }
+    if (link.notes !== undefined && !isNonEmptyString(link.notes)) {
+      issues.push(`${linkPath}.notes must be a non-empty string when present`);
+    }
+  });
   return issues;
 }
 
@@ -318,6 +424,15 @@ export function validateExecuteOutput(value: unknown): ValidationResult<ExecuteO
   }
   if (value.checks !== undefined && !isStringArray(value.checks)) {
     issues.push("checks must be an array of non-empty strings when present");
+  }
+  if (value.executionSteps !== undefined) {
+    issues.push(...validateExecutionSteps(value.executionSteps, "executionSteps"));
+  }
+  if (value.exampleTests !== undefined) {
+    issues.push(...validateExampleTests(value.exampleTests, "exampleTests"));
+  }
+  if (value.implementationLinks !== undefined) {
+    issues.push(...validateImplementationLinks(value.implementationLinks, "implementationLinks"));
   }
   if (value.handoffNotes !== undefined && !isStringArray(value.handoffNotes)) {
     issues.push("handoffNotes must be an array of non-empty strings when present");

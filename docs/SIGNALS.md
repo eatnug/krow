@@ -193,7 +193,7 @@ The minimum runtime should validate:
 - optional `capture` output
 - any decision answers returned from a gate
 
-The clarify payload should include evidence and acceptance criteria. The verify payload should include concrete checks, evidence, and any unverified claims.
+The clarify payload should include evidence and acceptance criteria. For Example-backed work, the execute payload should include Example-test links, implementation links, and ordered execution steps. The verify payload should include concrete checks, evidence, and any unverified claims.
 
 ## 10. Gate Discipline
 

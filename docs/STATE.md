@@ -92,10 +92,13 @@ Example shape:
   "unit-01": {
     "clarify": {},
     "execute": {},
-    "verify": {}
+    "verify": {},
+    "reviewReport": {}
   }
 }
 ```
+
+`reviewReport` is derived evidence written by the local runtime after verify. It is not a model-authored phase payload.
 
 ## Gate Data
 

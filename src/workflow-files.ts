@@ -4,6 +4,17 @@ export const STATE_DIR = ".krow/state/workflows";
 export const TASKS_DIR = ".krow/tasks";
 export const RELAYS_DIR = ".krow/relays";
 export const PROJECT_LANGUAGE_FILE = ".krow/language.md";
+export const CONCEPTS_DIR = ".krow/concepts";
+export const CONCEPT_INDEX_FILE = ".krow/concepts/index.md";
+export const TEMPLATES_DIR = ".krow/templates";
+export const PRDS_DIR = ".krow/prds";
+export const PLANS_DIR = ".krow/plans";
+export const EXAMPLES_DIR = ".krow/examples";
+export const REVIEWS_DIR = ".krow/reviews";
+export const GENERATED_DIR = ".krow/generated";
+export const ARTIFACTS_DIR = ".krow/artifacts";
+export const LOGS_DIR = ".krow/logs";
+export const KNOWLEDGE_DIR = ".krow/knowledge";
 
 export function absoluteRoot(rootDir = process.cwd()): string {
   return path.resolve(rootDir);
@@ -15,6 +26,22 @@ export function workflowStatePath(workflowId: string): string {
 
 export function projectLanguagePath(): string {
   return PROJECT_LANGUAGE_FILE;
+}
+
+export function conceptIndexPath(): string {
+  return CONCEPT_INDEX_FILE;
+}
+
+export function conceptsDirPath(): string {
+  return CONCEPTS_DIR;
+}
+
+export function conceptMapPath(conceptKey: string): string {
+  return `${CONCEPTS_DIR}/${conceptKey}.md`;
+}
+
+export function templatesDirPath(): string {
+  return TEMPLATES_DIR;
 }
 
 export function absoluteWorkflowStatePath(workflowId: string, rootDir = process.cwd()): string {
@@ -63,6 +90,10 @@ export function unitArtifactsDirPath(workflowId: string, unitId: string): string
 
 export function unitRelayPath(workflowId: string, unitId: string): string {
   return `${workflowRelayRootPath(workflowId)}/${unitId}.md`;
+}
+
+export function unitReviewReportPath(workflowId: string, unitId: string): string {
+  return `${REVIEWS_DIR}/${workflowId}-${unitId}.md`;
 }
 
 export function absolutePath(relativePath: string, rootDir = process.cwd()): string {

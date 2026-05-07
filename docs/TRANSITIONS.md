@@ -32,6 +32,8 @@ capture
 | `phase_verify` | `phase_output(verify)` and failed with no retries left | `VerifyOutput` | `blocked` |
 | `phase_capture` | `phase_output(capture)` | `CaptureOutput` | `completed` |
 
+For Example-backed work, `ExecuteOutput` validation includes the execution contract: tests from Examples must be linked before code implementation is accepted. After any accepted `phase_output(verify)`, the local CLI may derive or refresh `.krow/reviews/<workflowId>-<unitId>.md` from stored workflow evidence.
+
 ## Invalid Transition Policy
 
 If an event does not match the current status:

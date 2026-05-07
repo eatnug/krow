@@ -29,7 +29,19 @@ The published package name is `krow-cli`. The installed command remains `krow`.
 
 Do not run `npx krow ...`. That resolves a different npm package.
 
+To refresh an existing install, use:
+
+```bash
+npx --yes krow-cli@latest init --force --global
+```
+
 `init` installs host-facing wrappers and seeds repo-local workflow files, including `.krow/language.md`.
+It also creates the document structure used by the natural-language/code synchronization loop:
+
+- `.krow/concepts/index.md` for Project Concept Map routing
+- `.krow/templates/` for Project Language entries, Concept Maps, PRDs, Implementation Plans, Examples, and Review Reports
+- `.krow/generated/` for rebuildable retrieval evidence
+- `.krow/state/workflows/`, `.krow/tasks/`, and `.krow/relays/` for runtime state and handoff files
 
 Then use the installed work entrypoint from your host:
 
@@ -71,6 +83,8 @@ Hosts can wire those signals into their own UI, prompts, or automation.
 
 `krow` treats language as grounding, not mandatory translation. It reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, and records unresolved gaps.
 
+When `.krow/concepts/*.md` files exist, intake also matches related Project Concept Maps by concept key, title, alias, hierarchy, related concepts, business use cases, and code anchors. These maps are retrieval guides for likely code and test surfaces; they are not a hand-maintained dependency graph.
+
 For Codex, `$language-map` runs a focused mapping workflow that describes a requested codebase scope in the repository's approved language and reports glossary gaps, naming drift, and missing canonical terms.
 
 ### Bounded execution
@@ -93,8 +107,10 @@ Host coverage matters, but it is not the point. The point is to make coding work
 
 The installed wrappers are thin adapters over the same local control surface:
 
-- `route`: classify a message as chat or work without creating workflow state
+- `route`: resolve explicit chat or work intent without creating workflow state
 - `intake`: extract anchors, missing evidence, clarification questions, and a proposed unit graph
+- `documents`: scan PRD, plan, example, review, approval, and trace-link metadata
+- `review`: derive a Review Report from workflow documents, Example-test links, implementation links, and verification output
 - `start`: persist workflow state immediately and emit the first `run` or `gate` signal
 - `status`, `next`, `resume`: inspect or continue persisted workflow state
 - `submit-phase`, `submit-decisions`, `stop`: advance or terminate local workflow state
@@ -114,11 +130,22 @@ Workflow data is persisted under `.krow/`:
 - `.krow/tasks/<workflowId>/`
 - `.krow/relays/<workflowId>/`
 
+Product intent documents can live alongside that runtime state:
+
+- `.krow/language.md`
+- `.krow/concepts/`
+- `.krow/prds/`
+- `.krow/plans/`
+- `.krow/examples/`
+- `.krow/reviews/`
+
 ## Commands
 
 ```bash
-krow route "fix the release script"
-krow intake "fix the release script"
+krow route --intent work "fix the release script"
+krow intake --intent work "fix the release script"
+krow documents "fix the release script"
+krow review <workflowId>
 krow start --intent work "fix the release script"
 krow status <workflowId>
 krow next <workflowId>

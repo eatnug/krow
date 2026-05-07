@@ -31,6 +31,10 @@ function currentUnitId(state: WorkflowState): string | undefined {
   return state.units[state.currentUnitIndex]?.id;
 }
 
+function pendingDecisionsAreApproval(state: WorkflowState): boolean {
+  return state.pendingDecisions.length > 0 && state.pendingDecisions.every((decision) => decision.kind === "approval");
+}
+
 export function buildRunSignal(state: WorkflowState, phase: RuntimePhase = state.phase): RunSignal {
   const stateRef = workflowStatePath(state.workflowId);
   const unitId = currentUnitId(state);
@@ -66,7 +70,7 @@ export function buildClarifyGateSignal(state: WorkflowState): GateSignal {
   const unitId = currentUnitId(state);
   return {
     type: "gate",
-    gate: "clarify",
+    gate: pendingDecisionsAreApproval(state) ? "approve" : "clarify",
     workflow_id: state.workflowId,
     mode: state.mode,
     unit_id: unitId,
@@ -79,7 +83,9 @@ export function buildClarifyGateSignal(state: WorkflowState): GateSignal {
       kind: "decision_answers",
       command: submitDecisionsCommand(state.workflowId),
     },
-    instructions: clarifyGateInstructions(state.workflowId, stateRef),
+    instructions: pendingDecisionsAreApproval(state)
+      ? `Collect the pending PRD/Plan approval decisions, then run ${submitDecisionsCommand(state.workflowId)} with one answer per decision.`
+      : clarifyGateInstructions(state.workflowId, stateRef),
   };
 }
 

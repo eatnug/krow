@@ -1,13 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type {
   LanguageGrounding,
   LanguageNamespace,
+  ProjectConceptMapMatch,
   LanguageStatement,
   LanguageTerm,
   LanguageTermMatch,
   RouteConfidence,
 } from "./types.js";
-import { absolutePath, projectLanguagePath } from "./workflow-files.js";
+import { absolutePath, conceptIndexPath, conceptsDirPath, projectLanguagePath } from "./workflow-files.js";
 
 const SEED_MARKER = "This file defines the approved local language for this codebase.";
 
@@ -212,12 +213,17 @@ function parseTableRows(lines: string[], startIndex: number, namespace: Language
     const evidence = splitAliases(evidenceIndex >= 0 ? cells[evidenceIndex] : undefined);
     const statusValue = statusIndex >= 0 ? cells[statusIndex]?.toLowerCase() : "";
 
+    const status =
+      statusValue === "proposed" || statusValue === "unresolved" || statusValue === "deprecated"
+        ? statusValue
+        : "approved";
+
     terms.push({
       id: normalizeId(resolvedNamespace, canonical, id),
       namespace: resolvedNamespace,
       canonical,
       aliases,
-      status: statusValue === "proposed" || statusValue === "unresolved" ? statusValue : "approved",
+      status,
       source: "language_file",
       evidence,
     });
@@ -273,6 +279,297 @@ function loadLanguageTerms(rootDir: string): {
   const customTerms = parsed.filter((item) => item.status === "approved");
   const status = parsed.length === 0 && content.includes(SEED_MARKER) ? "seed" : "custom";
   return { terms: mergeTerms([...builtinTerms, ...customTerms]), status, languageRef };
+}
+
+type ParsedConceptMap = {
+  key: string;
+  title: string;
+  ref: string;
+  kind?: string;
+  layer?: string;
+  status?: LanguageTerm["status"];
+  aliases: string[];
+  relatedConcepts: string[];
+  codeAnchors: string[];
+  searchFields: Array<{ field: string; value: string }>;
+};
+
+const conceptLabels = new Set([
+  "aliases",
+  "boundary",
+  "boundaries",
+  "business use cases",
+  "code anchors",
+  "connected product concepts",
+  "hierarchy",
+  "key",
+  "kind",
+  "layer",
+  "means",
+  "notes",
+  "open questions",
+  "purpose",
+  "related concepts",
+  "responsibilities",
+  "status",
+  "system role",
+  "used in",
+]);
+
+function normalizeLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function labelLine(line: string): { label: string; value: string } | undefined {
+  const match = line.match(/^([A-Za-z][A-Za-z ]{1,40}):\s*(.*)$/);
+  if (!match) {
+    return undefined;
+  }
+  const label = normalizeLabel(match[1]);
+  if (!conceptLabels.has(label)) {
+    return undefined;
+  }
+  return { label, value: match[2].trim() };
+}
+
+function cleanMarkdownValue(value: string): string {
+  const cleaned = value
+    .replace(/^[-*]\s+/, "")
+    .trim();
+  const codeOnly = cleaned.match(/^`([^`]+)`$/)?.[1];
+  return codeOnly ?? cleaned;
+}
+
+function splitListValue(value: string | undefined): string[] {
+  if (!value || value === "-" || value === "(none)") {
+    return [];
+  }
+  return value
+    .split(/[,;、]/)
+    .map(cleanMarkdownValue)
+    .filter(Boolean);
+}
+
+function labelValues(lines: string[], label: string): string[] {
+  const target = normalizeLabel(label);
+  const values: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = labelLine(lines[index]);
+    if (!current || current.label !== target) {
+      continue;
+    }
+
+    values.push(...splitListValue(current.value));
+
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+      const trimmed = lines[nextIndex].trim();
+      if (!trimmed) {
+        break;
+      }
+      if (/^#{1,6}\s+/.test(trimmed) || labelLine(trimmed)) {
+        break;
+      }
+      if (/^[-*]\s+/.test(trimmed)) {
+        values.push(cleanMarkdownValue(trimmed));
+      }
+    }
+  }
+
+  return unique(values);
+}
+
+function firstLabelValue(lines: string[], label: string): string | undefined {
+  return labelValues(lines, label)[0];
+}
+
+function normalizeConceptStatus(value: string | undefined): LanguageTerm["status"] | undefined {
+  if (value === "approved" || value === "proposed" || value === "unresolved" || value === "deprecated") {
+    return value;
+  }
+  return undefined;
+}
+
+function firstMarkdownHeading(content: string): string | undefined {
+  return content.match(/^#\s+(.+)$/m)?.[1]?.trim();
+}
+
+function conceptKeyFromRef(ref: string): string {
+  return ref.split("/").pop()?.replace(/\.md$/i, "") ?? "concept";
+}
+
+function parseProjectConceptMap(ref: string, content: string): ParsedConceptMap {
+  const lines = content.split(/\r?\n/);
+  const key = firstLabelValue(lines, "Key") ?? conceptKeyFromRef(ref);
+  const title = firstMarkdownHeading(content) ?? key;
+  const aliases = labelValues(lines, "Aliases");
+  const hierarchy = labelValues(lines, "Hierarchy");
+  const relatedConcepts = unique([
+    ...hierarchy,
+    ...labelValues(lines, "Related Concepts"),
+    ...labelValues(lines, "Connected Product Concepts"),
+    ...labelValues(lines, "Business Use Cases"),
+  ]);
+  const codeAnchors = labelValues(lines, "Code Anchors");
+  const kind = firstLabelValue(lines, "Kind");
+  const layer = firstLabelValue(lines, "Layer");
+  const systemRole = firstLabelValue(lines, "System Role");
+  const status = normalizeConceptStatus(firstLabelValue(lines, "Status"));
+  const purpose = firstLabelValue(lines, "Purpose");
+  const means = firstLabelValue(lines, "Means");
+
+  const searchFields = [
+    { field: "key", value: key },
+    { field: "title", value: title },
+    ...aliases.map((value) => ({ field: "alias", value })),
+    ...relatedConcepts.map((value) => ({ field: "related", value })),
+    ...codeAnchors.map((value) => ({ field: "codeAnchor", value })),
+    ...(kind ? [{ field: "kind", value: kind }] : []),
+    ...(layer ? [{ field: "layer", value: layer }] : []),
+    ...(systemRole ? [{ field: "systemRole", value: systemRole }] : []),
+    ...(purpose ? [{ field: "purpose", value: purpose }] : []),
+    ...(means ? [{ field: "means", value: means }] : []),
+  ];
+
+  return {
+    key,
+    title,
+    ref,
+    kind,
+    layer,
+    status,
+    aliases,
+    relatedConcepts,
+    codeAnchors,
+    searchFields,
+  };
+}
+
+function loadProjectConceptMaps(rootDir: string): ParsedConceptMap[] {
+  const dirRef = conceptsDirPath();
+  const dirPath = absolutePath(dirRef, rootDir);
+  if (!existsSync(dirPath)) {
+    return [];
+  }
+
+  return readdirSync(dirPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name !== "index.md")
+    .map((entry) => {
+      const ref = `${dirRef}/${entry.name}`;
+      return parseProjectConceptMap(ref, readFileSync(absolutePath(ref, rootDir), "utf8"));
+    });
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[`"'/_:.-]+/g, " ")
+    .replace(/[^a-z0-9가-힣]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedTokenSet(value: string): string[] {
+  return unique(normalizeSearchText(value).split(" ").filter((token) => token.length > 1)).sort();
+}
+
+function alignedConceptFieldWithTerm(fieldValue: string, termText: string): boolean {
+  const field = normalizeSearchText(fieldValue);
+  const term = normalizeSearchText(termText);
+  if (!field || !term) {
+    return false;
+  }
+  if (field === term || field.includes(term) || term.includes(field)) {
+    return true;
+  }
+
+  const fieldTokens = normalizedTokenSet(fieldValue);
+  const termTokens = normalizedTokenSet(termText);
+  return fieldTokens.length >= 2 && fieldTokens.join("|") === termTokens.join("|");
+}
+
+function matchConceptField(message: string, field: string): { matchedText: string; confidence: RouteConfidence } | undefined {
+  if (field.length < 3) {
+    return undefined;
+  }
+
+  const phraseMatch = findPhrase(message, field);
+  if (phraseMatch) {
+    return { matchedText: phraseMatch.matchedText, confidence: "high" };
+  }
+
+  const normalizedMessage = normalizeSearchText(message);
+  const normalizedField = normalizeSearchText(field);
+  if (normalizedField.length < 3) {
+    return undefined;
+  }
+  if (normalizedMessage.includes(normalizedField)) {
+    return { matchedText: field, confidence: "medium" };
+  }
+
+  const tokens = normalizedField.split(" ").filter((token) => token.length > 1);
+  if (tokens.length >= 2 && tokens.every((token) => normalizedMessage.includes(token))) {
+    return { matchedText: field, confidence: "medium" };
+  }
+
+  return undefined;
+}
+
+function matchProjectConceptMaps(
+  message: string,
+  conceptMaps: ParsedConceptMap[],
+  matchedTerms: LanguageTermMatch[],
+  proposedTerms: LanguageTerm[],
+): ProjectConceptMapMatch[] {
+  const termTexts = unique([
+    ...matchedTerms.flatMap((term) => [term.id, term.canonical, ...term.aliases]),
+    ...proposedTerms.map((term) => term.canonical),
+  ]);
+
+  const matchesByConcept: ProjectConceptMapMatch[] = [];
+
+  for (const conceptMap of conceptMaps) {
+    const directMatches = conceptMap.searchFields
+      .map((item) => ({ ...item, match: matchConceptField(message, item.value) }))
+      .filter((item): item is { field: string; value: string; match: { matchedText: string; confidence: RouteConfidence } } =>
+        Boolean(item.match),
+      );
+    const termMatches = conceptMap.searchFields
+      .filter((item) => termTexts.some((termText) => alignedConceptFieldWithTerm(item.value, termText)))
+      .map((item) => ({
+        field: `term:${item.field}`,
+        value: item.value,
+        match: { matchedText: item.value, confidence: "medium" as RouteConfidence },
+      }));
+    const matches = [...directMatches, ...termMatches];
+
+    if (matches.length === 0) {
+      continue;
+    }
+
+    const match: ProjectConceptMapMatch = {
+      key: conceptMap.key,
+      title: conceptMap.title,
+      ref: conceptMap.ref,
+      aliases: conceptMap.aliases,
+      relatedConcepts: conceptMap.relatedConcepts,
+      codeAnchors: conceptMap.codeAnchors,
+      matchedText: matches[0].match.matchedText,
+      matchFields: unique(matches.map((item) => item.field)),
+    };
+    if (conceptMap.kind !== undefined) {
+      match.kind = conceptMap.kind;
+    }
+    if (conceptMap.layer !== undefined) {
+      match.layer = conceptMap.layer;
+    }
+    if (conceptMap.status !== undefined) {
+      match.status = conceptMap.status;
+    }
+    matchesByConcept.push(match);
+  }
+
+  return matchesByConcept.slice(0, 8);
 }
 
 function mergeTerms(terms: LanguageTerm[]): LanguageTerm[] {
@@ -536,6 +833,8 @@ export function groundRequestLanguage(message: string, rootDir = process.cwd()):
   const loaded = loadLanguageTerms(rootDir);
   const matchedTerms = matchTerms(message, loaded.terms);
   const proposedTerms = extractProposedTerms(message, matchedTerms);
+  const conceptMaps = loadProjectConceptMaps(rootDir);
+  const relatedConceptMaps = matchProjectConceptMaps(message, conceptMaps, matchedTerms, proposedTerms);
   const statements = inferRelationStatements(message, matchedTerms, proposedTerms);
   const unresolvedRelationCount = statements.filter((item) => item.status === "unresolved").length;
   const unresolvedRelationsRequireClarification = unresolvedRelationCount > 0 && proposedTerms.length > 0;
@@ -565,18 +864,27 @@ export function groundRequestLanguage(message: string, rootDir = process.cwd()):
     );
   }
 
+  if (relatedConceptMaps.length > 0) {
+    notes.push(
+      `related Project Concept Maps found: ${relatedConceptMaps.map((conceptMap) => conceptMap.key).join(", ")}`,
+    );
+  }
+
   return {
     summary: {
       languageRef: loaded.languageRef,
+      conceptIndexRef: conceptIndexPath(),
       vocabularyStatus: loaded.status,
       approvedTermCount: loaded.terms.length,
       matchedTermCount: matchedTerms.length,
       proposedTermCount: proposedTerms.length,
+      relatedConceptMapCount: relatedConceptMaps.length,
       unresolvedRelationCount,
       requiresClarification,
     },
     matchedTerms: matchedTerms.map(({ index: _index, ...item }) => item),
     proposedTerms,
+    relatedConceptMaps,
     statements,
     notes,
     questions,

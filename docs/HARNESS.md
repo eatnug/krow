@@ -445,7 +445,7 @@ Useful additions:
 - entry-scoped capability policy
 - phase-scoped capability policy
 - forked worker launch interface
-- local control commands for route/start/status/next/stop
+- local control commands for route/intake/documents/review/start/status/next/stop
 
 The core guarantee is simple:
 

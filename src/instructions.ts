@@ -19,15 +19,19 @@ export function cliPrefix(): string {
 }
 
 export function routeCommand(): string {
-  return `${cliPrefix()} route '<message>' [--intent <work|chat>] [--allow-heuristics]`;
+  return `${cliPrefix()} route '<message>' [--intent <work|chat>]`;
 }
 
 export function intakeCommand(): string {
-  return `${cliPrefix()} intake '<message>' [--intent <work|chat>] [--allow-heuristics]`;
+  return `${cliPrefix()} intake '<message>' [--intent <work|chat>]`;
 }
 
 export function startCommand(): string {
-  return `${cliPrefix()} start '<message>' [--intent <work|chat>] [--allow-heuristics] [--capture] [--mode <name>]`;
+  return `${cliPrefix()} start '<message>' [--intent <work|chat>] [--capture] [--mode <name>]`;
+}
+
+export function reviewCommand(workflowId: string, unitId = "[unitId]"): string {
+  return `${cliPrefix()} review ${workflowId} ${unitId}`;
 }
 
 export function statusCommand(workflowId: string): string {

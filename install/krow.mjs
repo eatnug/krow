@@ -10,11 +10,22 @@ const KROW_COMMAND_PLACEHOLDER = "__KROW_COMMAND__";
 const BOOTSTRAP_RELATIVE_PATH = [".krow", "bin", "krow-bootstrap.mjs"];
 const RUNTIME_DIST_RELATIVE_PATH = [".krow", "runtime", "dist"];
 const PROJECT_LANGUAGE_RELATIVE_PATH = [".krow", "language.md"];
-
-const OLD_PROJECT_LANGUAGE = `# Project Language
-
-This file defines the approved local language for this codebase.
-`;
+const CONCEPT_INDEX_RELATIVE_PATH = [".krow", "concepts", "index.md"];
+const RUNTIME_DIRECTORY_RELATIVE_PATHS = [
+  [".krow", "state", "workflows"],
+  [".krow", "tasks"],
+  [".krow", "relays"],
+  [".krow", "concepts"],
+  [".krow", "prds"],
+  [".krow", "plans"],
+  [".krow", "examples"],
+  [".krow", "reviews"],
+  [".krow", "generated"],
+  [".krow", "artifacts"],
+  [".krow", "logs"],
+  [".krow", "knowledge"],
+  [".krow", "templates"],
+];
 
 const PROJECT_LANGUAGE = `# Project Language
 
@@ -67,16 +78,238 @@ code review, commits, and task packets.
 - (none)
 `;
 
+const CONCEPT_INDEX = `# Project Concept Maps
+
+This file routes agents to concept-level maps.
+
+Project Concept Maps are optional retrieval aids. The source of truth remains
+Project Language, PRDs, Implementation Plans, Examples, tests, and code.
+
+## Concepts
+
+| Key | Concept | Kind | Layer | Status | Ref | Aliases |
+|-----|---------|------|-------|--------|-----|---------|
+
+## Rules
+
+- Create a Concept Map when a Project Language concept needs hierarchy, boundaries, code anchors, or implementation responsibility beyond a glossary entry.
+- Do not create Concept Maps for private helpers, generated code, tiny UI atoms, or local framework glue.
+- Keep this index small. Put details in each concept file.
+`;
+
+const PROJECT_LANGUAGE_ENTRY_TEMPLATE = `# Project Language Entry
+
+## TERM-001: <Term Name>
+
+Key: <concept-key>
+Kind: actor | concept | rule | interface | data | process | module
+Layer: product | system
+Status: proposed | approved | deprecated
+
+Means:
+<One short definition.>
+
+Boundary:
+- Includes <included meaning>.
+- Excludes <excluded or nearby meaning>.
+
+Used In:
+- PRD: <prd-id or name>
+- Code: <story-facing code anchor>
+- Tests: <test anchor>
+
+Related:
+- <related-concept-key>
+
+Open Questions:
+- (none)
+`;
+
+const CONCEPT_MAP_TEMPLATE = `# <Concept Name>
+
+Key: <concept-key>
+Kind: actor | concept | rule | interface | data | process | module
+Layer: product | system
+Status: proposed | approved | deprecated
+
+Means:
+<What this concept means in the project language.>
+
+Hierarchy:
+- <child-concept-key>
+
+Related Concepts:
+- <related-concept-key>
+
+Business Use Cases:
+- <use-case-key>
+
+Code Anchors:
+- Model: \`<path-or-symbol>\`
+- Repository: \`<path-or-symbol>\`
+- API: \`<path-or-symbol>\`
+- UI: \`<path-or-symbol>\`
+- Tests: \`<path-or-symbol>\`
+
+Boundaries:
+- <What this concept owns.>
+- <What this concept does not own.>
+
+Notes:
+- (none)
+`;
+
+const PRD_TEMPLATE = `# PRD: <Product Change>
+
+PRD ID: PRD-001
+Status: draft
+
+## Product Goal
+
+<What product behavior should exist and why it matters.>
+
+## Concepts
+
+- <concept-key>
+
+## User Stories
+
+### US-001: <Story Name>
+
+As a <Project Language actor>, I want <behavior> so that <reason>.
+
+Acceptance Criteria:
+
+- AC-001: <Rule that must hold.>
+
+Examples:
+
+- EX-001: Given <state>, when <action>, then <expected result>.
+
+## Out Of Scope
+
+- <Explicit non-goal.>
+
+## Approval
+
+Status: draft
+Approved By:
+Approved At:
+
+Decisions:
+- (none)
+`;
+
+const IMPLEMENTATION_PLAN_TEMPLATE = `# Implementation Plan: <Plan Name>
+
+Plan ID: PLAN-001
+Status: draft
+PRD: <prd-ref>
+
+## Concepts
+
+- <concept-key>
+
+## Work Units
+
+### WU-001: <Work Unit Name>
+
+User Stories:
+- US-001
+
+Examples:
+- EX-001
+
+Scope:
+- <file, symbol, module, or document surface>
+
+Expected Tests:
+- EX-001 -> <test file or test name containing EX-001>
+
+Code Anchors:
+- <path or symbol>
+
+Verification:
+- <command or manual check>
+
+## Approval
+
+Status: draft
+Approved By:
+Approved At:
+
+Decisions:
+- (none)
+`;
+
+const EXAMPLE_TEMPLATE = `# Example: <Example Name>
+
+Example ID: EX-001
+Acceptance Criteria:
+- AC-001
+
+Concepts:
+- <concept-key>
+
+## Scenario
+
+Given <state>
+When <action>
+Then <expected result>
+
+## Expected Test Link
+
+- Test: <test name or path containing EX-001>
+`;
+
+const REVIEW_REPORT_TEMPLATE = `# Review Report: <Change Name>
+
+Review ID: REVIEW-001
+Plan: <plan-ref>
+PRD: <prd-ref>
+
+## Derived Links
+
+| PRD | User Story | Acceptance Criteria | Example | Test | Code Anchor | Status |
+|-----|------------|---------------------|---------|------|-------------|--------|
+
+## Execution Trace
+
+- Tests from Examples:
+- Code implementation:
+- Verification after code:
+
+## Alignment Findings
+
+- <Missing link, naming drift, or scope drift.>
+
+## Verification
+
+- <Check and result.>
+
+## Remaining Risks
+
+- (none)
+`;
+
 const KROW_BOOTSTRAP = `#!/usr/bin/env node
 
 // ${MANAGED_MARKER}
 
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const bootstrapDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeCliPath = path.resolve(bootstrapDir, "../runtime/dist/cli.js");
+
+if (!existsSync(runtimeCliPath)) {
+  process.stderr.write(
+    "krow runtime is missing. Re-run 'npx --yes krow-cli@latest init --force' to refresh the local install.\\n",
+  );
+  process.exit(1);
+}
 
 const result = spawnSync(process.execPath, [runtimeCliPath, ...process.argv.slice(2)], {
   stdio: "inherit",
@@ -157,7 +390,7 @@ Parse the JSON response.
   - \`verify\`: Read, Grep, Glob, Bash, Agent
   - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
 - In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
-- In \`execute\`, complete only the current unit. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
+- In \`execute\`, complete only the current unit. When the task packet includes Examples, create or update tests for those Examples before changing implementation code, then implement code, rerun the scoped checks, and return \`executionSteps\`, \`exampleTests\`, and \`implementationLinks\`. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
 - In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification. Always include concrete checks, evidence, and any unverified claims in the payload.
 - In \`capture\`, write only durable reusable learnings.
 - Wait for the agent to return its result.
@@ -192,7 +425,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 
 ## Rules
 
-- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- The local control surface is: \`route\`, \`intake\`, \`documents\`, \`review\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
 - NEVER skip the local control commands. Every transition goes through krow.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
@@ -292,7 +525,7 @@ Parse the JSON response.
   - \`verify\`: Read, Grep, Glob, Bash, Agent
   - \`capture\`: Read, Grep, Glob, Edit, Write, Bash, Agent
 - In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
-- In \`execute\`, complete only the current unit. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
+- In \`execute\`, complete only the current unit. When the task packet includes Examples, create or update tests for those Examples before changing implementation code, then implement code, rerun the scoped checks, and return \`executionSteps\`, \`exampleTests\`, and \`implementationLinks\`. If the workflow state shows multiple ready sibling units with disjoint ownership, use that as host-level scheduling metadata for bounded subagents or parallel runs; do not silently merge sibling units into one payload.
 - In \`verify\`, try to disprove the claimed result. Do not silently edit files during verification. Always include concrete checks, evidence, and any unverified claims in the payload.
 - In \`capture\`, write only durable reusable learnings.
 - Wait for the Agent result.
@@ -327,7 +560,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 
 ## Rules
 
-- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- The local control surface is: \`route\`, \`intake\`, \`documents\`, \`review\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
 - NEVER skip the local control commands. Every transition goes through krow.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
@@ -371,7 +604,7 @@ Parse the JSON response.
   - \`verify\`: use read_file, grep_search, list_directory, and run_shell_command; do not silently edit files
   - \`capture\`: use read_file, grep_search, list_directory, edit_file, write_file, and run_shell_command only for durable knowledge capture
 - In \`clarify\`, gather evidence first, list the concrete evidence you used, and turn the success condition into explicit acceptance criteria for the unit before returning ready=true.
-- In \`execute\`, complete only the current unit. If the workflow state shows other ready sibling units, use that graph metadata for host scheduling; if the host cannot parallelize them, process the ready units step by step without skipping transitions.
+- In \`execute\`, complete only the current unit. When the task packet includes Examples, create or update tests for those Examples before changing implementation code, then implement code, rerun the scoped checks, and return \`executionSteps\`, \`exampleTests\`, and \`implementationLinks\`. If the workflow state shows other ready sibling units, use that graph metadata for host scheduling; if the host cannot parallelize them, process the ready units step by step without skipping transitions.
 - In \`verify\`, try to disprove the claimed result before accepting it. Always include concrete checks, evidence, and any unverified claims.
 - When the phase work is complete, collect your result as one JSON object matching \`required_schema\`.
 - Run via run_shell_command using this exact safe pattern, replacing the \`<JSON>\` line with minified JSON:
@@ -404,7 +637,7 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 
 ## Rules
 
-- The local control surface is: \`route\`, \`intake\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
+- The local control surface is: \`route\`, \`intake\`, \`documents\`, \`review\`, \`start\`, \`status\`, \`next\`, \`resume\`, \`submit-phase\`, \`submit-decisions\`, \`stop\`.
 - NEVER skip the local control commands. Every transition goes through krow.
 - Never inline JSON as a quoted shell argument. Use stdin heredocs with \`-\` so apostrophes in model output do not break the shell.
 - Minify JSON before passing to commands (no newlines).
@@ -417,7 +650,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  krow init [--force] [-g | --global] [--home <dir>]",
+      "  krow init [-f | --force] [-g | --global] [--home <dir>]",
       "  krow remove [-g | --global] [--home <dir>]",
       "",
       "Commands:",
@@ -425,7 +658,7 @@ function printUsage() {
       "  remove    Remove installed Codex, Claude Code, and Gemini CLI wrappers",
       "",
       "Flags:",
-      "  --force         Overwrite managed files even if they already exist",
+      "  -f, --force    Overwrite managed files even if they already exist",
       "  -g, --global    Install to / remove from home directory (global)",
       "  --home <dir>    Target directory override",
     ].join("\n") + "\n",
@@ -440,7 +673,7 @@ function parseArgs(argv) {
 
   for (let index = 1; index < argv.length; index += 1) {
     const value = argv[index];
-    if (value === "--force") {
+    if (value === "--force" || value === "-f") {
       force = true;
       continue;
     }
@@ -493,16 +726,18 @@ async function writeSeedFile(targetPath, content) {
     if (existing === content) {
       return "unchanged";
     }
-    if (existing.trim() === OLD_PROJECT_LANGUAGE.trim()) {
-      await fs.writeFile(targetPath, content, "utf8");
-      return "updated (seed format)";
-    }
     return "skipped (already exists)";
   }
 
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, content, "utf8");
   return "created";
+}
+
+async function ensureDirectory(targetPath) {
+  const exists = await pathExists(targetPath);
+  await fs.mkdir(targetPath, { recursive: true });
+  return exists ? "unchanged" : "created";
 }
 
 async function installRuntime(packageRoot, home) {
@@ -576,11 +811,67 @@ export async function runInit({ force, global: isGlobal, home }) {
   const projectLanguagePath = path.join(home, ...PROJECT_LANGUAGE_RELATIVE_PATH);
 
   results.push(await installRuntime(packageRoot, home));
+
+  for (const relativePath of RUNTIME_DIRECTORY_RELATIVE_PATHS) {
+    const targetPath = path.join(home, ...relativePath);
+    results.push({
+      label: `runtime directory ${relativePath.join("/")}`,
+      path: targetPath,
+      status: await ensureDirectory(targetPath),
+    });
+  }
+
   results.push({
     label: "project language",
     path: projectLanguagePath,
     status: await writeSeedFile(projectLanguagePath, PROJECT_LANGUAGE),
   });
+
+  const seedFiles = [
+    {
+      label: "concept index",
+      path: path.join(home, ...CONCEPT_INDEX_RELATIVE_PATH),
+      content: CONCEPT_INDEX,
+    },
+    {
+      label: "Project Language entry template",
+      path: path.join(home, ".krow", "templates", "project-language-entry.md"),
+      content: PROJECT_LANGUAGE_ENTRY_TEMPLATE,
+    },
+    {
+      label: "Project Concept Map template",
+      path: path.join(home, ".krow", "templates", "concept-map.md"),
+      content: CONCEPT_MAP_TEMPLATE,
+    },
+    {
+      label: "PRD template",
+      path: path.join(home, ".krow", "templates", "prd.md"),
+      content: PRD_TEMPLATE,
+    },
+    {
+      label: "Implementation Plan template",
+      path: path.join(home, ".krow", "templates", "implementation-plan.md"),
+      content: IMPLEMENTATION_PLAN_TEMPLATE,
+    },
+    {
+      label: "Example template",
+      path: path.join(home, ".krow", "templates", "example.md"),
+      content: EXAMPLE_TEMPLATE,
+    },
+    {
+      label: "Review Report template",
+      path: path.join(home, ".krow", "templates", "review-report.md"),
+      content: REVIEW_REPORT_TEMPLATE,
+    },
+  ];
+
+  for (const seedFile of seedFiles) {
+    results.push({
+      label: seedFile.label,
+      path: seedFile.path,
+      status: await writeSeedFile(seedFile.path, seedFile.content),
+    });
+  }
 
   const targets = [
     {
@@ -615,28 +906,6 @@ export async function runInit({ force, global: isGlobal, home }) {
     results.push({ ...target, status });
   }
 
-  const legacyTargets = [
-    {
-      label: "legacy Codex $krow skill",
-      path: path.join(home, ".codex", "skills", "krow", "SKILL.md"),
-    },
-    {
-      label: "legacy Claude Code /krow command",
-      path: path.join(home, ".claude", "commands", "krow.md"),
-    },
-    {
-      label: "legacy Gemini CLI /krow command",
-      path: path.join(home, ".gemini", "commands", "krow.toml"),
-    },
-  ];
-
-  for (const target of legacyTargets) {
-    results.push({
-      ...target,
-      status: await removeManagedFileIfExists(target.path, home),
-    });
-  }
-
   process.stdout.write(
     [
       `Installed from ${packageRoot}`,
@@ -665,10 +934,6 @@ export async function runRemove({ global: isGlobal, home }) {
       path: bootstrapPath(home),
     },
     {
-      label: "Codex $krow skill",
-      path: path.join(home, ".codex", "skills", "krow", "SKILL.md"),
-    },
-    {
       label: "Codex $work skill",
       path: path.join(home, ".codex", "skills", "work", "SKILL.md"),
     },
@@ -677,16 +942,8 @@ export async function runRemove({ global: isGlobal, home }) {
       path: path.join(home, ".codex", "skills", "language-map", "SKILL.md"),
     },
     {
-      label: "Claude Code /krow command",
-      path: path.join(home, ".claude", "commands", "krow.md"),
-    },
-    {
       label: "Claude Code /work command",
       path: path.join(home, ".claude", "commands", "work.md"),
-    },
-    {
-      label: "Gemini CLI /krow command",
-      path: path.join(home, ".gemini", "commands", "krow.toml"),
     },
     {
       label: "Gemini CLI /work command",

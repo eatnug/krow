@@ -10,7 +10,7 @@ Keep these layers separate:
 - runtime: state machine, signals, validators, capability policies
 - host wrapper: registration syntax, installation format, command or skill entrypoint, tool-permission mapping
 
-The core contract should not care whether a host uses `/krow`, `$krow`, a button, a command palette action, or a plugin-defined entry.
+The core contract should not care whether a host uses `/work`, `$work`, a button, a command palette action, or a plugin-defined entry.
 
 ## Wrapper Responsibilities
 
@@ -38,7 +38,7 @@ Those are wrapper concerns, not execution concerns.
 
 Examples of valid wrapper choices:
 
-- Claude Code wrapper registers a native `/krow` command and forwards the normalized request as explicit work intent
-- Codex wrapper registers a native `$krow` skill or plugin entry and forwards the normalized request as explicit work intent
+- Claude Code wrapper registers a native `/work` command and forwards the normalized request as explicit work intent
+- Codex wrapper registers a native `$work` skill or plugin entry and forwards the normalized request as explicit work intent
 
 Both wrappers should feed the same core runtime and the same `work` intake behavior.

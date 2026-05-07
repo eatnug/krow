@@ -5,15 +5,12 @@ import type {
   CreateWorkflowInput,
   ExecuteOutput,
   FaultSignal,
-  Phase,
-  ProtocolResponse,
   RunSignal,
   RuntimePhase,
   VerifyOutput,
   WorkflowState,
   WorkflowStatus,
   WorkflowUnit,
-  WorkItem,
 } from "./types.js";
 import {
   validateCaptureOutput,
@@ -23,6 +20,15 @@ import {
   validateVerifyOutput,
   validateWorkflowState,
 } from "./validators.js";
+import {
+  approvalPromptsForDocuments,
+  unsatisfiedApprovalDocuments,
+  type ApprovalTargetDocument,
+} from "./document-contracts.js";
+import {
+  executionContractForUnit,
+  validateExecuteOutputAgainstContract,
+} from "./execution-contracts.js";
 import {
   unitBatonPath,
   unitBriefPath,
@@ -39,9 +45,7 @@ import { buildRunContext, completedUnitIds, nextReadyUnitIndex, unitDependencies
 
 type PhasePayload = ClarifyOutput | ExecuteOutput | VerifyOutput | CaptureOutput;
 type SignalResult = { state?: WorkflowState; signal: ControlSignal };
-type CompatResult = { state?: WorkflowState; response: ProtocolResponse };
-type CombinedResult = SignalResult & CompatResult;
-type CreatedWorkflow = { state: WorkflowState; signal: ControlSignal; response: ProtocolResponse };
+type CreatedWorkflow = { state: WorkflowState; signal: ControlSignal };
 
 function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -57,6 +61,25 @@ function createWorkflowId(): string {
 
 function currentUnit(state: WorkflowState): WorkflowUnit | undefined {
   return state.units[state.currentUnitIndex];
+}
+
+function pendingDecisionsAreApproval(state: WorkflowState): boolean {
+  return state.pendingDecisions.length > 0 && state.pendingDecisions.every((decision) => decision.kind === "approval");
+}
+
+function currentApprovalGaps(state: WorkflowState): ApprovalTargetDocument[] {
+  const unit = currentUnit(state);
+  const context = unit?.documentContext;
+  if (!context || typeof context !== "object") {
+    return [];
+  }
+
+  const approvalGaps = (context as { approvalGaps?: unknown }).approvalGaps;
+  if (!Array.isArray(approvalGaps)) {
+    return [];
+  }
+
+  return unsatisfiedApprovalDocuments(approvalGaps as ApprovalTargetDocument[], state.decisionHistory);
 }
 
 function currentUnitOutputBucket(state: WorkflowState): Record<string, unknown> {
@@ -154,6 +177,30 @@ function runSignal(state: WorkflowState, phase: RuntimePhase, instructions: stri
   };
 }
 
+function instructionsForPhase(state: WorkflowState, phase: RuntimePhase): string {
+  if (phase !== "execute") {
+    switch (phase) {
+      case "clarify":
+        return "Tighten the current unit until execution is safe, verification is clear, and blocked sibling units are not pulled into scope.";
+      case "verify":
+        return "Try to disprove the claimed result for the current unit and report recoverable issues precisely enough to drive the next clarify pass.";
+      case "capture":
+        return "Capture only durable, reusable patterns worth saving.";
+    }
+  }
+
+  const contract = executionContractForUnit(currentUnit(state));
+  if (contract && contract.exampleIds.length > 0) {
+    return [
+      "Execute the approved plan in this order: create or update tests from the referenced Examples, run the relevant tests before code when meaningful, implement the code, then rerun the tests after code.",
+      `Required Examples: ${contract.exampleIds.join(", ")}.`,
+      "The execute payload must include executionSteps, exampleTests, and implementationLinks that prove tests came before code and code links back to Examples.",
+    ].join(" ");
+  }
+
+  return "Perform only the clarified unit of work. If the graph exposes other ready units, treat them as scheduler metadata for the host rather than silently expanding this unit.";
+}
+
 function faultSignal(
   state: WorkflowState | undefined,
   error: string,
@@ -191,8 +238,8 @@ function terminalSignal(state: WorkflowState): ControlSignal {
   };
 }
 
-function withResponse(result: SignalResult): CombinedResult {
-  return { ...result, response: result.signal };
+function asSignalResult(result: SignalResult): SignalResult {
+  return result;
 }
 
 function normalizeCreateWorkflowInput(input: CreateWorkflowInput | string): CreateWorkflowInput {
@@ -269,11 +316,11 @@ export function createWorkflow(input: CreateWorkflowInput | string): CreatedWork
   const stateValidation = validateWorkflowState(state);
   if (!stateValidation.ok) {
     const signal = faultSignal(state, "new workflow failed validation", stateValidation.issues, false);
-    return { state, signal, response: signal };
+    return { state, signal };
   }
 
   const signal = nextSignal(state);
-  return { state, signal, response: signal };
+  return { state, signal };
 }
 
 export function nextSignal(state: WorkflowState): ControlSignal {
@@ -284,15 +331,11 @@ export function nextSignal(state: WorkflowState): ControlSignal {
 
   switch (state.status) {
     case "phase_clarify":
-      return runSignal(
-        state,
-        "clarify",
-        "Tighten the current unit until execution is safe, verification is clear, and blocked sibling units are not pulled into scope.",
-      );
+      return runSignal(state, "clarify", instructionsForPhase(state, "clarify"));
     case "clarify_pending":
       return {
         type: "gate",
-        gate: "clarify",
+        gate: pendingDecisionsAreApproval(state) ? "approve" : "clarify",
         workflow_id: state.workflowId,
         mode: state.mode,
         unit_id: currentUnit(state)?.id,
@@ -301,22 +344,19 @@ export function nextSignal(state: WorkflowState): ControlSignal {
         state_ref: workflowStatePath(state.workflowId),
         workflow_task_index_ref: workflowTaskIndexPath(state.workflowId),
         task_status_ref: currentUnit(state) ? unitStatusPath(state.workflowId, currentUnit(state)!.id) : undefined,
-        instructions: "Collect the pending external decisions, then submit decision answers and resume clarify.",
+        on_complete: {
+          kind: "decision_answers",
+        },
+        instructions: pendingDecisionsAreApproval(state)
+          ? "Collect one approval decision for each pending PRD/Plan prompt, submit decision answers, then resume the workflow."
+          : "Collect the pending external decisions, then submit decision answers and resume clarify.",
       };
     case "phase_execute":
-      return runSignal(
-        state,
-        "execute",
-        "Perform only the clarified unit of work. If the graph exposes other ready units, treat them as scheduler metadata for the host rather than silently expanding this unit.",
-      );
+      return runSignal(state, "execute", instructionsForPhase(state, "execute"));
     case "phase_verify":
-      return runSignal(
-        state,
-        "verify",
-        "Try to disprove the claimed result for the current unit and report recoverable issues precisely enough to drive the next clarify pass.",
-      );
+      return runSignal(state, "verify", instructionsForPhase(state, "verify"));
     case "phase_capture":
-      return runSignal(state, "capture", "Capture only durable, reusable patterns worth saving.");
+      return runSignal(state, "capture", instructionsForPhase(state, "capture"));
     case "completed":
     case "blocked":
     case "stopped":
@@ -326,29 +366,25 @@ export function nextSignal(state: WorkflowState): ControlSignal {
   }
 }
 
-export function nextResponse(state: WorkflowState): ProtocolResponse {
-  return nextSignal(state);
-}
-
 export function stopWorkflow(state: WorkflowState, reason = "workflow stopped"): CreatedWorkflow {
   const next = cloneState(state);
   next.status = "stopped";
   next.blockedReason = reason;
   next.updatedAt = nowIso();
   const signal = nextSignal(next);
-  return { state: next, signal, response: signal };
+  return { state: next, signal };
 }
 
-export function applyDecisionAnswers(state: WorkflowState, input: unknown): CombinedResult {
+export function applyDecisionAnswers(state: WorkflowState, input: unknown): SignalResult {
   if (state.status !== "clarify_pending") {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "decision answers are only valid during clarify_pending", [], true),
     });
   }
 
   const validation = validateDecisionAnswers(input);
   if (!validation.ok || !validation.value) {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "invalid decision answers", validation.issues, true),
     });
   }
@@ -357,8 +393,17 @@ export function applyDecisionAnswers(state: WorkflowState, input: unknown): Comb
   const providedDecisionIds = validation.value.map((answer) => answer.decisionId);
   const missingDecisionIds = requiredDecisionIds.filter((decisionId) => !providedDecisionIds.includes(decisionId));
   const unknownDecisionIds = providedDecisionIds.filter((decisionId) => !requiredDecisionIds.includes(decisionId));
+  const invalidOptionIssues = validation.value.flatMap((answer) => {
+    const decision = state.pendingDecisions.find((item) => item.id === answer.decisionId);
+    if (!decision) {
+      return [];
+    }
+    return decision.options.some((option) => option.id === answer.selectedOptionId)
+      ? []
+      : [`${answer.decisionId} selected unknown option: ${answer.selectedOptionId}`];
+  });
 
-  if (missingDecisionIds.length > 0 || unknownDecisionIds.length > 0) {
+  if (missingDecisionIds.length > 0 || unknownDecisionIds.length > 0 || invalidOptionIssues.length > 0) {
     const issues: string[] = [];
     if (missingDecisionIds.length > 0) {
       issues.push(`missing bundled decisions: ${missingDecisionIds.join(", ")}`);
@@ -366,7 +411,8 @@ export function applyDecisionAnswers(state: WorkflowState, input: unknown): Comb
     if (unknownDecisionIds.length > 0) {
       issues.push(`unknown decisions submitted: ${unknownDecisionIds.join(", ")}`);
     }
-    return withResponse({
+    issues.push(...invalidOptionIssues);
+    return asSignalResult({
       signal: faultSignal(state, "decision answers did not match the pending bundled decisions", issues, true),
     });
   }
@@ -374,17 +420,33 @@ export function applyDecisionAnswers(state: WorkflowState, input: unknown): Comb
   const next = cloneState(state);
   next.decisionHistory.push(...validation.value);
   next.pendingDecisions = [];
+
+  if (pendingDecisionsAreApproval(state)) {
+    if (validation.value.some((answer) => answer.selectedOptionId === "stop")) {
+      next.status = "stopped";
+      next.blockedReason = "approval gate stopped by decision";
+      next.updatedAt = nowIso();
+      return asSignalResult({ state: next, signal: nextSignal(next) });
+    }
+    if (validation.value.some((answer) => answer.selectedOptionId === "revise")) {
+      setPhase(next, "phase_clarify", "clarify");
+      return asSignalResult({ state: next, signal: nextSignal(next) });
+    }
+    setPhase(next, "phase_execute", "execute");
+    return asSignalResult({ state: next, signal: nextSignal(next) });
+  }
+
   setPhase(next, "phase_clarify", "clarify");
-  return withResponse({ state: next, signal: nextSignal(next) });
+  return asSignalResult({ state: next, signal: nextSignal(next) });
 }
 
-export function submitDecisions(state: WorkflowState, input: unknown): CombinedResult {
+export function submitDecisions(state: WorkflowState, input: unknown): SignalResult {
   return applyDecisionAnswers(state, input);
 }
 
-export function applyPhaseOutput(state: WorkflowState, phase: string, input: unknown): CombinedResult {
+export function applyPhaseOutput(state: WorkflowState, phase: string, input: unknown): SignalResult {
   if (state.phase !== phase) {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(
         state,
         `phase output for ${phase} is invalid while workflow phase is ${state.phase}`,
@@ -404,24 +466,24 @@ export function applyPhaseOutput(state: WorkflowState, phase: string, input: unk
     case "capture":
       return applyCapture(state, input);
     default:
-      return withResponse({ signal: faultSignal(state, `unsupported phase: ${phase}`, [], false) });
+      return asSignalResult({ signal: faultSignal(state, `unsupported phase: ${phase}`, [], false) });
   }
 }
 
-export function submitPhaseOutput(state: WorkflowState, phase: string, input: unknown): CombinedResult {
+export function submitPhaseOutput(state: WorkflowState, phase: string, input: unknown): SignalResult {
   return applyPhaseOutput(state, phase, input);
 }
 
-function applyClarify(state: WorkflowState, input: unknown): CombinedResult {
+function applyClarify(state: WorkflowState, input: unknown): SignalResult {
   if (state.status !== "phase_clarify") {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "clarify output is only valid during phase_clarify", [], true),
     });
   }
 
   const validation = validateClarifyOutput(input);
   if (!validation.ok || !validation.value) {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "invalid clarify output", validation.issues, true),
     });
   }
@@ -431,7 +493,7 @@ function applyClarify(state: WorkflowState, input: unknown): CombinedResult {
 
   if (!validation.value.ready) {
     if (validation.value.decisions.length === 0) {
-      return withResponse({
+      return asSignalResult({
         signal: faultSignal(
           state,
           "clarify output is not ready but did not supply any external decisions",
@@ -442,44 +504,57 @@ function applyClarify(state: WorkflowState, input: unknown): CombinedResult {
     }
     next.pendingDecisions = validation.value.decisions;
     setPhase(next, "clarify_pending", "clarify");
-    return withResponse({ state: next, signal: nextSignal(next) });
+    return asSignalResult({ state: next, signal: nextSignal(next) });
   }
 
   next.pendingDecisions = [];
+  const approvalGaps = currentApprovalGaps(next);
+  if (approvalGaps.length > 0) {
+    next.pendingDecisions = approvalPromptsForDocuments(approvalGaps);
+    setPhase(next, "clarify_pending", "clarify");
+    return asSignalResult({ state: next, signal: nextSignal(next) });
+  }
   setPhase(next, "phase_execute", "execute");
-  return withResponse({ state: next, signal: nextSignal(next) });
+  return asSignalResult({ state: next, signal: nextSignal(next) });
 }
 
-function applyExecute(state: WorkflowState, input: unknown): CombinedResult {
+function applyExecute(state: WorkflowState, input: unknown): SignalResult {
   if (state.status !== "phase_execute") {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "execute output is only valid during phase_execute", [], true),
     });
   }
 
   const validation = validateExecuteOutput(input);
   if (!validation.ok || !validation.value) {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "invalid execute output", validation.issues, true),
+    });
+  }
+
+  const contractIssues = validateExecuteOutputAgainstContract(currentUnit(state), validation.value);
+  if (contractIssues.length > 0) {
+    return asSignalResult({
+      signal: faultSignal(state, "execute output did not satisfy the approved Example -> test -> code contract", contractIssues, true),
     });
   }
 
   const next = cloneState(state);
   storePhaseOutput(next, "execute", validation.value);
   setPhase(next, "phase_verify", "verify");
-  return withResponse({ state: next, signal: nextSignal(next) });
+  return asSignalResult({ state: next, signal: nextSignal(next) });
 }
 
-function applyVerify(state: WorkflowState, input: unknown): CombinedResult {
+function applyVerify(state: WorkflowState, input: unknown): SignalResult {
   if (state.status !== "phase_verify") {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "verify output is only valid during phase_verify", [], true),
     });
   }
 
   const validation = validateVerifyOutput(input);
   if (!validation.ok || !validation.value) {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "invalid verify output", validation.issues, true),
     });
   }
@@ -492,17 +567,17 @@ function applyVerify(state: WorkflowState, input: unknown): CombinedResult {
     const allUnitsComplete = completedUnitIds(next).length >= next.units.length;
     if (!allUnitsComplete) {
       advanceToNextUnit(next);
-      return withResponse({ state: next, signal: nextSignal(next) });
+      return asSignalResult({ state: next, signal: nextSignal(next) });
     }
     if (next.captureEnabled) {
       next.verifyAttempts = 0;
       setPhase(next, "phase_capture", "capture");
-      return withResponse({ state: next, signal: nextSignal(next) });
+      return asSignalResult({ state: next, signal: nextSignal(next) });
     }
     next.verifyAttempts = 0;
     next.status = "completed";
     next.updatedAt = nowIso();
-    return withResponse({ state: next, signal: nextSignal(next) });
+    return asSignalResult({ state: next, signal: nextSignal(next) });
   }
 
   next.verifyAttempts += 1;
@@ -512,34 +587,34 @@ function applyVerify(state: WorkflowState, input: unknown): CombinedResult {
       next.status = "blocked";
       next.blockedReason = validation.value.summary;
       next.updatedAt = nowIso();
-      return withResponse({ state: next, signal: nextSignal(next) });
+      return asSignalResult({ state: next, signal: nextSignal(next) });
     }
     next.pendingDecisions = validation.value.decisions;
     setPhase(next, "clarify_pending", "clarify");
-    return withResponse({ state: next, signal: nextSignal(next) });
+    return asSignalResult({ state: next, signal: nextSignal(next) });
   }
 
   if (next.verifyAttempts >= next.maxVerifyAttempts) {
     next.status = "blocked";
     next.blockedReason = validation.value.retryHint || validation.value.summary;
     next.updatedAt = nowIso();
-    return withResponse({ state: next, signal: nextSignal(next) });
+    return asSignalResult({ state: next, signal: nextSignal(next) });
   }
 
   setPhase(next, "phase_clarify", "clarify");
-  return withResponse({ state: next, signal: nextSignal(next) });
+  return asSignalResult({ state: next, signal: nextSignal(next) });
 }
 
-function applyCapture(state: WorkflowState, input: unknown): CombinedResult {
+function applyCapture(state: WorkflowState, input: unknown): SignalResult {
   if (state.status !== "phase_capture") {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "capture output is only valid during phase_capture", [], true),
     });
   }
 
   const validation = validateCaptureOutput(input);
   if (!validation.ok || !validation.value) {
-    return withResponse({
+    return asSignalResult({
       signal: faultSignal(state, "invalid capture output", validation.issues, true),
     });
   }
@@ -548,5 +623,5 @@ function applyCapture(state: WorkflowState, input: unknown): CombinedResult {
   storePhaseOutput(next, "capture", validation.value);
   next.status = "completed";
   next.updatedAt = nowIso();
-  return withResponse({ state: next, signal: nextSignal(next) });
+  return asSignalResult({ state: next, signal: nextSignal(next) });
 }

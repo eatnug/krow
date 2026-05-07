@@ -2,8 +2,6 @@
 // Core Runtime Model
 // ============================================================================
 
-export type Phase = "clarify" | "plan" | "execute" | "verify";
-
 export type RuntimePhase = "clarify" | "execute" | "verify" | "capture";
 
 export type WorkflowPhase = RuntimePhase;
@@ -33,6 +31,12 @@ export interface DecisionPrompt {
   id: string;
   question: string;
   context?: string;
+  kind?: "clarify" | "approval";
+  target?: {
+    kind: "prd" | "plan" | "language" | "scope";
+    ref: string;
+    status?: string;
+  };
   options: DecisionOption[];
 }
 
@@ -58,8 +62,44 @@ export interface ExecuteOutput {
   outputFiles?: string[];
   artifacts?: string[];
   checks?: string[];
+  executionSteps?: ExecutionStepTrace[];
+  exampleTests?: ExampleTestTrace[];
+  implementationLinks?: ImplementationTrace[];
   handoffNotes?: string[];
   notes: string[];
+}
+
+export type ExecutionStepId =
+  | "tests-from-examples"
+  | "run-tests-before-code"
+  | "implement-code"
+  | "run-tests-after-code";
+
+export interface ExecutionStepTrace {
+  id: ExecutionStepId;
+  status: "completed" | "skipped" | "blocked";
+  evidence: string;
+}
+
+export interface ExampleTestTrace {
+  exampleId: string;
+  testFiles: string[];
+  testNames?: string[];
+  status: "created" | "updated" | "existing";
+}
+
+export interface ImplementationTrace {
+  codeFiles: string[];
+  exampleIds?: string[];
+  planIds?: string[];
+  notes?: string;
+}
+
+export interface UnitReviewReport {
+  ref: string;
+  reviewId: string;
+  generatedAt: string;
+  gaps: string[];
 }
 
 export interface VerifyIssue {
@@ -139,77 +179,12 @@ export interface CreateWorkflowInput {
   createdAt?: string;
 }
 
+export interface UnitOutputs extends Partial<Record<RuntimePhase, unknown>> {
+  reviewReport?: UnitReviewReport;
+}
+
 export interface WorkflowOutputs {
-  [unitId: string]: Partial<Record<RuntimePhase, unknown>>;
-}
-
-// ============================================================================
-// Legacy Compatibility Types
-// ============================================================================
-
-export type Capability = "read" | "write" | "full";
-
-export interface WorkItem {
-  id: string;
-  role: string;
-  task: string;
-  result?: unknown;
-}
-
-export interface TaskDefinition {
-  id: string;
-  title: string;
-  scope: string[];
-  context: string[];
-  dependsOn: string[];
-}
-
-export interface PlanOutput {
-  tasks: TaskDefinition[];
-  approach: string;
-  risks: string[];
-}
-
-export interface Task {
-  id: string;
-  title: string;
-  scope: string[];
-  context: string[];
-  dependsOn: string[];
-  status: "pending" | "executing" | "verifying" | "done" | "failed";
-  verifyAttempts: number;
-  executeOutput?: ExecuteOutput;
-  verifyOutput?: VerifyOutput;
-}
-
-export interface WorkItemState {
-  id: string;
-  role: string;
-  task: string;
-  status: "pending" | "running" | "done";
-  result?: string;
-}
-
-export interface ActiveWork {
-  phase: Phase;
-  taskId?: string;
-  synthesize: string;
-  items: WorkItemState[];
-}
-
-export interface ContextInput {
-  type: "file" | "data";
-  ref: string;
-}
-
-export interface ContextSpec {
-  isolation: "isolated" | "shared";
-  inputs: ContextInput[];
-}
-
-export interface OutputSpec {
-  schema: string;
-  format: "json" | "files";
+  [unitId: string]: UnitOutputs;
 }
 
 // ============================================================================
@@ -310,70 +285,6 @@ export interface FaultSignal {
 export type ControlSignal = RunSignal | GateSignal | DoneSignal | FaultSignal;
 
 // ============================================================================
-// Legacy Protocol Shapes
-// ============================================================================
-
-export interface PhaseResponse {
-  type: "phase";
-  phase: Phase;
-  workflowId: string;
-  taskId?: string;
-  prompt: string;
-  capability: Capability;
-  context: ContextSpec;
-  output: OutputSpec;
-  onComplete: string;
-  instructions: string;
-}
-
-export interface GateResponse {
-  type: "gate";
-  gate: "clarify" | "plan" | "verify";
-  workflowId: string;
-  decisions?: DecisionPrompt[];
-  tasks?: Task[];
-  approach?: string;
-  risks?: string[];
-  taskId?: string;
-  verifyAttempts?: number;
-  lastIssues?: VerifyIssue[];
-  onComplete: string;
-  instructions: string;
-}
-
-export interface FaultResponse {
-  type: "fault";
-  workflowId: string;
-  error: string;
-  issues: string[];
-  recoverable: boolean;
-  instructions: string;
-}
-
-export interface DoneResponse {
-  type: "done";
-  workflowId: string;
-  status: "completed" | "blocked" | "stopped";
-  message: string;
-  instructions: string;
-}
-
-export interface BatchResponse {
-  type: "batch";
-  workflowId: string;
-  responses: PhaseResponse[];
-  instructions: string;
-}
-
-export type ProtocolResponse =
-  | ControlSignal
-  | PhaseResponse
-  | GateResponse
-  | FaultResponse
-  | DoneResponse
-  | BatchResponse;
-
-// ============================================================================
 // Validation
 // ============================================================================
 
@@ -385,7 +296,7 @@ export interface ValidationResult<T> {
 
 export type RouteKind = "chat" | "work";
 
-export type RouteSource = "explicit" | "heuristic";
+export type RouteSource = "explicit" | "default";
 
 export type RouteConfidence = "low" | "medium" | "high";
 
@@ -446,7 +357,7 @@ export interface RequestAnchors {
 
 export type LanguageNamespace = "core" | "tech" | "project";
 
-export type LanguageTermStatus = "approved" | "proposed" | "unresolved";
+export type LanguageTermStatus = "approved" | "proposed" | "unresolved" | "deprecated";
 
 export interface LanguageTerm {
   id: string;
@@ -471,12 +382,28 @@ export interface LanguageStatement {
   sourceText: string;
 }
 
+export interface ProjectConceptMapMatch {
+  key: string;
+  title: string;
+  ref: string;
+  kind?: string;
+  layer?: "product" | "system" | string;
+  status?: LanguageTermStatus;
+  aliases: string[];
+  relatedConcepts: string[];
+  codeAnchors: string[];
+  matchedText: string;
+  matchFields: string[];
+}
+
 export interface LanguageGroundingSummary {
   languageRef: string;
+  conceptIndexRef: string;
   vocabularyStatus: "missing" | "seed" | "custom";
   approvedTermCount: number;
   matchedTermCount: number;
   proposedTermCount: number;
+  relatedConceptMapCount: number;
   unresolvedRelationCount: number;
   requiresClarification: boolean;
 }
@@ -485,6 +412,7 @@ export interface LanguageGrounding {
   summary: LanguageGroundingSummary;
   matchedTerms: LanguageTermMatch[];
   proposedTerms: LanguageTerm[];
+  relatedConceptMaps: ProjectConceptMapMatch[];
   statements: LanguageStatement[];
   notes: string[];
   questions: string[];
@@ -569,6 +497,8 @@ export interface ForkedWorkerAdapter {
 export type LocalControlCommandName =
   | "route"
   | "intake"
+  | "documents"
+  | "review"
   | "start"
   | "status"
   | "next"

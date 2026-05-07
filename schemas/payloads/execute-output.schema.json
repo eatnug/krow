@@ -22,6 +22,71 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "executionSteps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["tests-from-examples", "run-tests-before-code", "implement-code", "run-tests-after-code"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["completed", "skipped", "blocked"]
+          },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "exampleTests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["exampleId", "testFiles", "status"],
+        "properties": {
+          "exampleId": { "type": "string", "minLength": 1 },
+          "testFiles": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "testNames": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "status": {
+            "type": "string",
+            "enum": ["created", "updated", "existing"]
+          }
+        }
+      }
+    },
+    "implementationLinks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["codeFiles"],
+        "properties": {
+          "codeFiles": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "exampleIds": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "planIds": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "notes": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "handoffNotes": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }

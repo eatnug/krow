@@ -1,6 +1,6 @@
 {
   "name": "krow-cli",
-  "version": "0.2.20",
+  "version": "0.3.0",
   "description": "A host-agnostic agent harness for coding work",
   "type": "module",
   "main": "dist/index.js",

@@ -7,6 +7,7 @@ import type {
   WorkflowUnit,
 } from "./types.js";
 import { workflowTaskIndexPath } from "./state-store.js";
+import { executionContractForUnit } from "./execution-contracts.js";
 import { buildRunContext, completedUnitIds } from "./workflow-graph.js";
 
 function currentUnit(state: WorkflowState): WorkflowUnit | undefined {
@@ -154,6 +155,7 @@ export function buildClarifyPrompt(state: WorkflowState): string {
     "",
     "Requirements:",
     "- Read the relevant code and gather evidence before making factual claims.",
+    "- Read related Project Concept Maps and Code Anchors from the task packet when present.",
     "- List the concrete evidence you actually used: files, symbols, tests, logs, or docs.",
     "- Turn the user's success condition into explicit acceptance criteria for this unit.",
     "- Surface only the current missing information bundle. If external input is required, ask for all known decisions at once.",
@@ -199,6 +201,7 @@ export function buildExecutePrompt(state: WorkflowState): string {
   const unit = currentUnit(state);
   const outputs = unitOutputs(state, unit?.id);
   const clarify = asClarifyOutput(outputs.clarify);
+  const executionContract = executionContractForUnit(unit);
 
   const lines = [
     "# Execute",
@@ -211,6 +214,10 @@ export function buildExecutePrompt(state: WorkflowState): string {
     "Requirements:",
     "- Stay inside the current unit boundary.",
     "- Use evidence gathered during clarify rather than re-expanding scope.",
+    "- Inspect related Project Concept Map Code Anchors before changing story-facing code.",
+    "- When Examples are present, create or update tests for those Examples before changing implementation code.",
+    "- After Example tests exist, implement the code and rerun scoped checks.",
+    "- Return `executionSteps`, `exampleTests`, and `implementationLinks` when Examples are present.",
     "- Treat sibling ready units as scheduler context. This run still owns only the current unit.",
     "- Make concrete code or artifact changes and return one execute payload.",
     "- Report exactly what changed and any checks you ran.",
@@ -219,6 +226,14 @@ export function buildExecutePrompt(state: WorkflowState): string {
   ];
 
   lines.push(...graphContextBlock(state, unit));
+
+  if (executionContract && executionContract.exampleIds.length > 0) {
+    lines.push("Execution contract:");
+    lines.push(`- Examples: ${executionContract.exampleIds.join(", ")}`);
+    lines.push(`- Plan ids: ${executionContract.planIds.join(", ") || "(none)"}`);
+    lines.push(`- Required stage order: ${executionContract.requiredStages.join(" -> ")}`);
+    lines.push("");
+  }
 
   if (clarify) {
     lines.push("Clarify summary:");
@@ -240,6 +255,23 @@ export function buildExecutePrompt(state: WorkflowState): string {
     outputFiles: [],
     artifacts: [],
     checks: ["npm run typecheck"],
+    executionSteps: [
+      { id: "tests-from-examples", status: "completed", evidence: "Added or updated tests that reference EX-001." },
+      { id: "run-tests-before-code", status: "completed", evidence: "Scoped test failed or exposed the missing behavior before code." },
+      { id: "implement-code", status: "completed", evidence: "Changed implementation files linked below." },
+      { id: "run-tests-after-code", status: "completed", evidence: "Scoped tests passed after implementation." },
+    ],
+    exampleTests: [
+      { exampleId: "EX-001", testFiles: ["tests/example.test.ts"], testNames: ["EX-001 blocks free users"], status: "created" },
+    ],
+    implementationLinks: [
+      {
+        codeFiles: ["src/example.ts"],
+        exampleIds: ["EX-001"],
+        planIds: ["PLAN-001"],
+        notes: "Implements the behavior asserted by EX-001.",
+      },
+    ],
     handoffNotes: ["Integration unit should re-check shared interfaces after sibling units finish."],
     notes: ["Checks run, constraints, or follow-up notes."],
   }));
@@ -252,6 +284,7 @@ export function buildVerifyPrompt(state: WorkflowState): string {
   const outputs = unitOutputs(state, unit?.id);
   const clarify = asClarifyOutput(outputs.clarify);
   const execute = asExecuteOutput(outputs.execute);
+  const executionContract = executionContractForUnit(unit);
 
   const lines = [
     "# Verify",
@@ -264,6 +297,8 @@ export function buildVerifyPrompt(state: WorkflowState): string {
     "",
     "Requirements:",
     "- Read the changed files and run proportionate checks when possible.",
+    "- Check related Project Concept Maps and Code Anchors when the task packet lists them.",
+    "- When Examples are present, verify Example ids appear in tests and implementation links cover changed code.",
     "- Report the concrete checks you ran, their status, and what evidence each one produced.",
     "- Record any claims that still remain unverified instead of implying they passed.",
     "- Report recoverable issues precisely enough to drive the next clarify pass.",
@@ -274,6 +309,13 @@ export function buildVerifyPrompt(state: WorkflowState): string {
   ];
 
   lines.push(...graphContextBlock(state, unit));
+
+  if (executionContract && executionContract.exampleIds.length > 0) {
+    lines.push("Execution contract under review:");
+    lines.push(`- Examples: ${executionContract.exampleIds.join(", ")}`);
+    lines.push(`- Required stage order: ${executionContract.requiredStages.join(" -> ")}`);
+    lines.push("");
+  }
 
   if (clarify?.verifyFocus?.length) {
     lines.push("Verify focus:");
