@@ -690,7 +690,7 @@ If the user provides a service or feature description, init can seed minimal pro
 
 Existing-code connection belongs to `$check`, not `init`.
 
-`$check` is both the brownfield first pass and the recurring sanity check. It scans routes, tests, exported symbols, package structure, filenames, existing krow docs, and Concept Map anchors as evidence. It writes generated evidence, a check report, and proposed krow document updates under `.krow/`. It does not edit source code. Proposed Project Language and Concept Map changes become part of the krow baseline only after explicit user approval.
+`$check` is both the brownfield first pass and the recurring sanity check. It accepts an optional service or product description, then scans routes, tests, exported symbols, package structure, runtime entrypoints, product documents, filenames, existing krow docs, and Concept Map anchors as evidence. It writes generated evidence, a check report, and proposed krow document updates under `.krow/`. It does not edit source code. Proposed Project Language and Concept Map changes become part of the krow baseline only after explicit user approval.
 
 ### Agent Runtime Boundary
 
@@ -827,6 +827,7 @@ Add the user-facing `$check` surface for brownfield initialization and recurring
 Success:
 
 - `$check` reads the repository and writes only under `.krow`
+- `$check` treats positional text as product/service description; explicit path narrowing belongs to `--scope`
 - generated evidence is rebuilt under `.krow/generated`
 - check reports are written under `.krow/checks/<check-id>/report.md`
 - proposed Project Language entries and Concept Maps are generated as reviewable `.krow` files

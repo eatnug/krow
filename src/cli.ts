@@ -165,7 +165,7 @@ function printUsage(): void {
       "Usage:",
       "  route <message> [--intent <work|chat>]",
       "  intake <message> [--intent <work|chat>]",
-      "  check [scope] [--root <dir>]",
+      "  check [description] [--about <text>] [--scope <path>] [--root <dir>]",
       "  check-apply <checkId> <json|path|-> [--root <dir>]",
       "  documents [message] [--root <dir>]",
       "  review <workflowId> [unitId] [--root <dir>]",
@@ -1507,8 +1507,11 @@ function visibleDocumentRetrieval(retrieval: DocumentRetrieval) {
 }
 
 function handleCheck(args: string[], flags: FlagMap): void {
-  const scope = args.join(" ").trim() || undefined;
+  const positionalDescription = args.join(" ").trim() || undefined;
+  const about = typeof flags.about === "string" ? flags.about : positionalDescription;
+  const scope = typeof flags.scope === "string" ? flags.scope : undefined;
   const result = runProjectCheck({
+    about,
     scope,
     rootDir: rootDir(flags),
   });

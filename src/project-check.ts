@@ -13,10 +13,14 @@ import { scanKrowDocuments } from "./document-contracts.js";
 import type { DecisionAnswer, DecisionPrompt } from "./types.js";
 
 type CodeFileKind = "source" | "test" | "doc" | "config";
+type EvidenceTier = "strong" | "artifact" | "weak";
+type FileRole = "runtime" | "artifact" | "support" | "document" | "other";
 
 export interface CodeInventoryFile {
   path: string;
   kind: CodeFileKind;
+  role: FileRole;
+  entrypoint: boolean;
   extension: string;
   size: number;
   symbols: string[];
@@ -45,12 +49,15 @@ interface CandidateConcept {
   symbols: string[];
   kind: "concept" | "interface" | "module";
   layer: "product" | "system";
+  evidenceTier: EvidenceTier;
+  evidenceKinds: string[];
   means: string;
 }
 
 interface CheckProposal {
   checkId: string;
   generatedAt: string;
+  about?: string;
   concepts: CandidateConcept[];
 }
 
@@ -66,6 +73,10 @@ export interface ProjectCheckResult {
   summary: {
     scannedFileCount: number;
     proposedConceptCount: number;
+    approvalQuestionCount: number;
+    strongCandidateCount: number;
+    artifactCandidateCount: number;
+    weakCandidateCount: number;
     findingCount: number;
     writesOutsideKrow: false;
   };
@@ -127,7 +138,68 @@ const symbolicExtensions = new Set([...sourceExtensions, ...configExtensions]);
 const maxReadableBytes = 500_000;
 const maxFiles = 4000;
 const maxSymbolsPerFile = 40;
-const maxProposedConcepts = 8;
+const maxProposedConcepts = 16;
+const maxApprovalQuestions = 8;
+
+const supportPathPrefixes = [".codex/", ".claude/", ".gemini/"];
+const artifactPathFragments = [
+  "template",
+  "templates",
+  "example",
+  "examples",
+  "fixture",
+  "fixtures",
+  "sample",
+  "samples",
+  "generated",
+];
+const primaryDocumentNames = new Set([
+  "readme.md",
+  "readme.mdx",
+  "agents.md",
+  "claude.md",
+  "codex.md",
+  "gemini.md",
+]);
+const productDocPrefixes = ["docs/"];
+const genericHeadingStopWords = new Set([
+  "architecture",
+  "artifact",
+  "commands",
+  "candidate tiers",
+  "command authority",
+  "configuration",
+  "conceptual layers",
+  "core concepts",
+  "development",
+  "decision loop",
+  "examples",
+  "findings",
+  "getting started",
+  "generated evidence",
+  "how it works",
+  "installation",
+  "local development",
+  "next step",
+  "overview",
+  "publishing",
+  "questions",
+  "quick start",
+  "reference",
+  "repository layout",
+  "rules",
+  "roadmap",
+  "setup",
+  "startup",
+  "strong",
+  "summary",
+  "testing",
+  "usage",
+  "weak",
+  "write boundary",
+]);
+const importExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"];
+const knownAcronyms = new Set(["ai", "api", "cli", "css", "ddd", "html", "http", "json", "prd", "sql", "ui", "url", "ux"]);
 
 const conceptStopWords = new Set([
   "app",
@@ -152,8 +224,10 @@ const conceptStopWords = new Set([
   "input",
   "install",
   "json",
+  "layer",
   "lib",
   "main",
+  "model",
   "node",
   "output",
   "package",
@@ -201,7 +275,13 @@ function slugify(value: string): string {
 }
 
 function titleFromWords(words: string[]): string {
-  return words.map((word) => word.slice(0, 1).toUpperCase() + word.slice(1)).join(" ");
+  return words.map((word) => {
+    const lower = word.toLowerCase();
+    if (knownAcronyms.has(lower)) {
+      return lower.toUpperCase();
+    }
+    return word.slice(0, 1).toUpperCase() + word.slice(1);
+  }).join(" ");
 }
 
 function splitIdentifier(value: string): string[] {
@@ -337,7 +417,7 @@ function scopeFiles(rootDir: string, scope?: string): string[] {
   const target = path.resolve(rootDir, scope);
   const relative = path.relative(rootDir, target);
   if (relative.startsWith("..") || path.isAbsolute(relative) || !existsSync(target)) {
-    return walkFiles(rootDir);
+    throw new Error(`check scope does not exist inside repository: ${scope}`);
   }
 
   const stats = statSync(target);
@@ -351,9 +431,197 @@ function scopeFiles(rootDir: string, scope?: string): string[] {
   return walkFiles(rootDir);
 }
 
+function packageJson(rootDir: string): Record<string, unknown> | undefined {
+  const packagePath = path.join(rootDir, "package.json");
+  if (!existsSync(packagePath)) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(readFileSync(packagePath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function collectExportTargets(value: unknown, targets: string[] = []): string[] {
+  if (typeof value === "string") {
+    targets.push(value);
+    return targets;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectExportTargets(item, targets);
+    }
+    return targets;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectExportTargets(item, targets);
+    }
+  }
+  return targets;
+}
+
+function resolveRepoFile(rootDir: string, candidate: string): string | undefined {
+  const stripped = candidate.replace(/^\.\//, "");
+  const attempts = [
+    stripped,
+    ...importExtensions.map((extension) => `${stripped}${extension}`),
+    ...importExtensions.map((extension) => path.posix.join(stripped, `index${extension}`)),
+  ];
+
+  for (const attempt of attempts) {
+    const normalized = attempt.replace(/\\/g, "/");
+    const absolute = path.resolve(rootDir, normalized);
+    const relative = path.relative(rootDir, absolute);
+    if (relative.startsWith("..") || path.isAbsolute(relative) || !existsSync(absolute)) {
+      continue;
+    }
+    if (statSync(absolute).isFile() && shouldReadFile(normalized)) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function sourceFallbackForEntrypoint(rootDir: string, relativePath: string): string | undefined {
+  if (!relativePath.startsWith("dist/")) {
+    return undefined;
+  }
+  const withoutDist = relativePath.replace(/^dist\//, "");
+  const withoutExtension = withoutDist.replace(/\.[A-Za-z0-9]+$/, "");
+  return resolveRepoFile(rootDir, path.posix.join("src", withoutExtension));
+}
+
+function packageEntrypoints(rootDir: string): Set<string> {
+  const pkg = packageJson(rootDir);
+  const entrypoints = new Set<string>();
+  if (!pkg) {
+    return entrypoints;
+  }
+
+  const candidates: string[] = [];
+  if (typeof pkg.main === "string") {
+    candidates.push(pkg.main);
+  }
+  if (typeof pkg.module === "string") {
+    candidates.push(pkg.module);
+  }
+  if (typeof pkg.bin === "string") {
+    candidates.push(pkg.bin);
+  } else if (pkg.bin && typeof pkg.bin === "object") {
+    for (const value of Object.values(pkg.bin as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        candidates.push(value);
+      }
+    }
+  }
+  collectExportTargets(pkg.exports, candidates);
+
+  for (const candidate of candidates) {
+    const resolved = resolveRepoFile(rootDir, candidate);
+    if (resolved) {
+      entrypoints.add(resolved);
+      continue;
+    }
+    const fallback = sourceFallbackForEntrypoint(rootDir, candidate.replace(/^\.\//, ""));
+    if (fallback) {
+      entrypoints.add(fallback);
+    }
+  }
+
+  return entrypoints;
+}
+
+function extractRelativeImports(content: string): string[] {
+  const imports: string[] = [];
+  const patterns = [
+    /\bimport\s+(?:[^"']+\s+from\s*)?["'](\.{1,2}\/[^"']+)["']/g,
+    /\bexport\s+[^"']+\s+from\s*["'](\.{1,2}\/[^"']+)["']/g,
+    /\bimport\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g,
+    /\brequire\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      if (match[1]) {
+        imports.push(match[1]);
+      }
+    }
+  }
+  return unique(imports);
+}
+
+function resolveImport(rootDir: string, fromFile: string, importPath: string): string | undefined {
+  const baseDir = path.posix.dirname(fromFile);
+  const candidate = path.posix.normalize(path.posix.join(baseDir, importPath));
+  return resolveRepoFile(rootDir, candidate);
+}
+
+function runtimeReachableFiles(rootDir: string, files: string[], entrypoints: Set<string>): Set<string> {
+  const fileSet = new Set(files);
+  const reachable = new Set<string>();
+  const queue = [...entrypoints].filter((entrypoint) => fileSet.has(entrypoint));
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || reachable.has(current)) {
+      continue;
+    }
+    reachable.add(current);
+
+    const absolute = path.join(rootDir, current);
+    if (!existsSync(absolute) || statSync(absolute).size > maxReadableBytes) {
+      continue;
+    }
+    const content = readFileSync(absolute, "utf8");
+    for (const importPath of extractRelativeImports(content)) {
+      const resolved = resolveImport(rootDir, current, importPath);
+      if (resolved && fileSet.has(resolved) && !reachable.has(resolved)) {
+        queue.push(resolved);
+      }
+    }
+  }
+
+  return reachable;
+}
+
+function pathHasFragment(relativePath: string, fragments: string[]): boolean {
+  const parts = relativePath.toLowerCase().split("/");
+  return parts.some((part) => fragments.some((fragment) => part === fragment || part.includes(`.${fragment}.`)));
+}
+
+function classifyFileRole(
+  relativePath: string,
+  kind: CodeFileKind,
+  entrypoints: Set<string>,
+  runtimeReachable: Set<string>,
+): FileRole {
+  const lowerPath = relativePath.toLowerCase();
+  if (supportPathPrefixes.some((prefix) => lowerPath.startsWith(prefix))) {
+    return "support";
+  }
+  if (pathHasFragment(relativePath, artifactPathFragments)) {
+    return "artifact";
+  }
+  if (kind === "doc") {
+    return "document";
+  }
+  if (entrypoints.has(relativePath) || runtimeReachable.has(relativePath)) {
+    return "runtime";
+  }
+  if (kind === "config") {
+    return "support";
+  }
+  return "other";
+}
+
 function buildCodeInventory(rootDir: string, scope?: string): CodeInventory {
   const root = path.resolve(rootDir);
-  const files = scopeFiles(root, scope).map((relativePath): CodeInventoryFile => {
+  const scopedFiles = scopeFiles(root, scope);
+  const entrypoints = packageEntrypoints(root);
+  const runtimeReachable = runtimeReachableFiles(root, scopedFiles, entrypoints);
+  const files = scopedFiles.map((relativePath): CodeInventoryFile => {
     const fullPath = path.join(root, relativePath);
     const stats = statSync(fullPath);
     const extension = path.extname(relativePath);
@@ -364,6 +632,8 @@ function buildCodeInventory(rootDir: string, scope?: string): CodeInventory {
     return {
       path: relativePath,
       kind: fileKind(relativePath),
+      role: classifyFileRole(relativePath, fileKind(relativePath), entrypoints, runtimeReachable),
+      entrypoint: entrypoints.has(relativePath),
       extension,
       size: stats.size,
       symbols: content ? extractSymbols(content) : [],
@@ -449,7 +719,190 @@ function languageTerms(content: string): string[] {
   return unique(values.map(normalizeSearchText).filter(Boolean));
 }
 
-function candidateConcepts(inventory: CodeInventory, existingTerms: string[], existingConceptKeys: string[]): CandidateConcept[] {
+function humanizePhrase(value: string): string {
+  return value
+    .replace(/[`*_#>\[\](){}]/g, " ")
+    .replace(/[:：-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function conceptTitleFromPhrase(value: string): string | undefined {
+  const phrase = humanizePhrase(value);
+  if (!phrase) {
+    return undefined;
+  }
+  const normalized = normalizeSearchText(phrase);
+  if (!normalized || genericHeadingStopWords.has(normalized)) {
+    return undefined;
+  }
+  const words = normalized
+    .split(" ")
+    .filter((word) => word.length > 1 && !conceptStopWords.has(word) && !/^\d+$/.test(word));
+  if (words.length === 0 || words.length > 5) {
+    return undefined;
+  }
+  if (!words.some((word) => word.length >= 4 || /[가-힣]/.test(word))) {
+    return undefined;
+  }
+  return titleFromWords(words);
+}
+
+function docPriority(relativePath: string): number {
+  const lower = relativePath.toLowerCase();
+  if (primaryDocumentNames.has(lower)) {
+    return 0;
+  }
+  if (productDocPrefixes.some((prefix) => lower.startsWith(prefix))) {
+    return 1;
+  }
+  return 2;
+}
+
+function documentEvidenceFiles(inventory: CodeInventory): CodeInventoryFile[] {
+  return inventory.files
+    .filter((file) => file.kind === "doc" && file.role === "document" && file.size <= maxReadableBytes)
+    .sort((left, right) => docPriority(left.path) - docPriority(right.path) || left.path.localeCompare(right.path))
+    .slice(0, 24);
+}
+
+function addTermsFromText(
+  text: string,
+  evidence: string,
+  addCandidate: (title: string | undefined, evidence: string, options: {
+    kind: CandidateConcept["kind"];
+    layer: CandidateConcept["layer"];
+    score: number;
+    tier: EvidenceTier;
+    evidenceKind: string;
+    means: string;
+    symbol?: string;
+  }) => void,
+): void {
+  const seen = new Set<string>();
+  const push = (raw: string, score: number, evidenceKind: string): void => {
+    const title = conceptTitleFromPhrase(raw);
+    if (!title) {
+      return;
+    }
+    const key = slugify(title);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    addCandidate(title, evidence, {
+      kind: "concept",
+      layer: "product",
+      score,
+      tier: "strong",
+      evidenceKind,
+      means: `Project-facing concept evidenced by ${evidence}. Confirm its boundary and wording before approving it as Project Language.`,
+    });
+  };
+
+  for (const match of text.matchAll(/^#{1,3}\s+(.+)$/gm)) {
+    if (match[1]) {
+      push(match[1], 6, "document-heading");
+    }
+  }
+
+  for (const match of text.matchAll(/`([A-Za-z][A-Za-z0-9가-힣 _./-]{2,60})`/g)) {
+    if (match[1] && !/[./][A-Za-z0-9]+$/.test(match[1])) {
+      push(match[1], 4, "document-term");
+    }
+  }
+
+  for (const chunk of text.split(/[,;]|\band\b/gi)) {
+    const trimmed = chunk
+      .replace(/^.*\b(?:into|includes?|contains?|covers?|coordinates?|manages?)\s+/i, "")
+      .replace(/^\s*(?:and|or|with|for|to)\s+/i, "")
+      .trim();
+    if (/^[A-Za-z가-힣][A-Za-z0-9가-힣 -]{2,40}$/.test(trimmed)) {
+      push(trimmed, 3, "document-list");
+    }
+  }
+
+  for (const match of text.matchAll(/\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){0,3})\b/g)) {
+    if (match[1]) {
+      push(match[1], 2, "document-phrase");
+    }
+  }
+}
+
+function addPackageTerms(
+  rootDir: string,
+  addCandidate: (title: string | undefined, evidence: string, options: {
+    kind: CandidateConcept["kind"];
+    layer: CandidateConcept["layer"];
+    score: number;
+    tier: EvidenceTier;
+    evidenceKind: string;
+    means: string;
+    symbol?: string;
+  }) => void,
+): void {
+  const pkg = packageJson(rootDir);
+  if (!pkg) {
+    return;
+  }
+  const name = typeof pkg.name === "string" ? pkg.name : undefined;
+  const description = typeof pkg.description === "string" ? pkg.description : undefined;
+  if (name) {
+    addCandidate(conceptTitleFromIdentifier(name), "package.json:name", {
+      kind: "concept",
+      layer: "product",
+      score: 7,
+      tier: "strong",
+      evidenceKind: "package-name",
+      means: "Project-facing package or product name evidenced by package.json. Confirm the exact product boundary before approving it as Project Language.",
+    });
+  }
+  if (description) {
+    addTermsFromText(description, "package.json:description", addCandidate);
+  }
+  if (pkg.bin && typeof pkg.bin === "object") {
+    for (const key of Object.keys(pkg.bin as Record<string, unknown>)) {
+      addCandidate(conceptTitleFromIdentifier(key), "package.json:bin", {
+        kind: "interface",
+        layer: "product",
+        score: 5,
+        tier: "strong",
+        evidenceKind: "package-bin",
+        means: "User-facing command evidenced by package.json. Confirm whether it belongs in Project Language before approving it.",
+      });
+    }
+  }
+}
+
+function candidateKeyVariants(key: string): string[] {
+  const variants = [canonicalCandidateKey(key), key];
+  if (key.endsWith("ies") && key.length > 4) {
+    variants.push(`${key.slice(0, -3)}y`);
+  }
+  if (key.endsWith("s") && key.length > 3 && !/(ss|us|is)$/.test(key)) {
+    variants.push(key.slice(0, -1));
+  } else {
+    variants.push(`${key}s`);
+  }
+  return unique(variants);
+}
+
+function canonicalCandidateKey(key: string): string {
+  if (key.endsWith("ies") && key.length > 4) {
+    return `${key.slice(0, -3)}y`;
+  }
+  if (key.endsWith("s") && key.length > 3 && !/(ss|us|is)$/.test(key)) {
+    return key.slice(0, -1);
+  }
+  return key;
+}
+
+function candidateConcepts(
+  inventory: CodeInventory,
+  existingTerms: string[],
+  existingConceptKeys: string[],
+  about?: string,
+): CandidateConcept[] {
   const byKey = new Map<string, CandidateConcept & { score: number }>();
   const existing = new Set([...existingTerms, ...existingConceptKeys.map(normalizeSearchText)]);
 
@@ -458,60 +911,125 @@ function candidateConcepts(inventory: CodeInventory, existingTerms: string[], ex
     kind: CandidateConcept["kind"];
     layer: CandidateConcept["layer"];
     score: number;
+    tier: EvidenceTier;
+    evidenceKind: string;
+    means: string;
   }): void {
     if (!title) {
       return;
     }
-    const key = slugify(title);
-    if (existing.has(normalizeSearchText(title)) || existing.has(normalizeSearchText(key))) {
+    const rawKey = slugify(title);
+    const key = candidateKeyVariants(rawKey).find((variant) => byKey.has(variant)) ?? canonicalCandidateKey(rawKey);
+    const candidateTitle = key !== rawKey ? conceptTitleFromIdentifier(key) ?? title : title;
+    if (existing.has(normalizeSearchText(title)) || candidateKeyVariants(rawKey).some((variant) => existing.has(normalizeSearchText(variant)))) {
       return;
     }
     const current = byKey.get(key);
     if (current) {
       current.score += options.score;
+      if (candidateTitle.length < current.title.length) {
+        current.title = candidateTitle;
+      }
       current.evidence = unique([...current.evidence, evidence]).slice(0, 6);
       current.symbols = unique([...current.symbols, ...(options.symbol ? [options.symbol] : [])]).slice(0, 8);
+      current.evidenceKinds = unique([...current.evidenceKinds, options.evidenceKind]).slice(0, 6);
+      if (tierRank(options.tier) < tierRank(current.evidenceTier)) {
+        current.evidenceTier = options.tier;
+        current.means = options.means;
+      }
       return;
     }
 
     byKey.set(key, {
       key,
-      title,
+      title: candidateTitle,
       aliases: [],
       evidence: [evidence],
       symbols: options.symbol ? [options.symbol] : [],
       kind: options.kind,
       layer: options.layer,
-      means: `Observed codebase concept associated with ${evidence}. Confirm the product meaning before treating it as approved Project Language.`,
+      evidenceTier: options.tier,
+      evidenceKinds: [options.evidenceKind],
+      means: options.means,
       score: options.score,
     });
   }
 
+  if (about?.trim()) {
+    addTermsFromText(about, "input:about", addCandidate);
+  }
+
+  addPackageTerms(inventory.root, addCandidate);
+
+  for (const file of documentEvidenceFiles(inventory)) {
+    const content = readFileSync(path.join(inventory.root, file.path), "utf8");
+    addTermsFromText(content, file.path, addCandidate);
+  }
+
   for (const file of inventory.files) {
-    if (file.kind === "source") {
+    if (file.kind === "source" && file.role !== "support") {
+      const tier = file.role === "runtime" ? "strong" : file.role === "artifact" ? "artifact" : "weak";
+      const layer = tier === "strong" ? "product" : "system";
+      const evidenceKind = file.role === "runtime" ? "runtime-file" : file.role === "artifact" ? "artifact-file" : "code-file";
+      const means =
+        tier === "strong"
+          ? `Runtime-reachable code concept associated with ${file.path}. Confirm the product meaning before approving it as Project Language.`
+          : tier === "artifact"
+            ? `Artifact-scoped code concept associated with ${file.path}. Treat it as supporting evidence unless the user says this artifact reflects product language.`
+            : `Weak code-only candidate associated with ${file.path}. Use it for retrieval context before promoting it to Project Language.`;
       addCandidate(conceptTitleFromIdentifier(path.basename(file.path)), file.path, {
         kind: "module",
-        layer: "system",
-        score: 1,
+        layer,
+        score: tier === "strong" ? 3 : tier === "artifact" ? 1 : 0.5,
+        tier,
+        evidenceKind,
+        means,
       });
     }
     for (const symbol of file.symbols) {
-      if (!isStableConceptSymbol(symbol)) {
+      if (!isStableConceptSymbol(symbol) || file.role === "support") {
         continue;
       }
+      const tier = file.role === "runtime" ? "strong" : file.role === "artifact" ? "artifact" : "weak";
+      const layer = tier === "strong" ? "product" : "system";
+      const evidenceKind = file.role === "runtime" ? "runtime-symbol" : file.role === "artifact" ? "artifact-symbol" : "code-symbol";
+      const means =
+        tier === "strong"
+          ? `Runtime-reachable exported symbol associated with ${file.path}. Confirm the product meaning before approving it as Project Language.`
+          : tier === "artifact"
+            ? `Artifact-scoped exported symbol associated with ${file.path}. Keep it as evidence unless the user confirms it is product language.`
+            : `Weak exported-symbol candidate associated with ${file.path}. Use it for retrieval context before promoting it to Project Language.`;
       addCandidate(conceptTitleFromIdentifier(symbol), file.path, {
         symbol,
         kind: "interface",
-        layer: "system",
-        score: 3,
+        layer,
+        score: tier === "strong" ? 5 : tier === "artifact" ? 2 : 1,
+        tier,
+        evidenceKind,
+        means,
       });
     }
   }
 
   return [...byKey.values()]
-    .sort((left, right) => right.score - left.score || left.title.localeCompare(right.title))
+    .sort(
+      (left, right) =>
+        tierRank(left.evidenceTier) - tierRank(right.evidenceTier) ||
+        right.score - left.score ||
+        left.title.localeCompare(right.title),
+    )
     .slice(0, maxProposedConcepts)
     .map(({ score: _score, ...candidate }) => candidate);
+}
+
+function tierRank(tier: EvidenceTier): number {
+  if (tier === "strong") {
+    return 0;
+  }
+  if (tier === "artifact") {
+    return 1;
+  }
+  return 2;
 }
 
 function cleanAnchorTarget(value: string): string {
@@ -575,7 +1093,7 @@ function uncoveredExamples(rootDir: string, inventory: CodeInventory): CheckFind
 }
 
 function proposalMarkdown(candidate: CandidateConcept, status: "proposed" | "approved"): string {
-  const anchors = candidate.evidence.map((item) => `- Code: \`${item}\``);
+  const anchors = candidate.evidence.map((item) => `- Evidence: \`${item}\``);
   return [
     `# ${candidate.title}`,
     "",
@@ -583,6 +1101,8 @@ function proposalMarkdown(candidate: CandidateConcept, status: "proposed" | "app
     `Kind: ${candidate.kind}`,
     `Layer: ${candidate.layer}`,
     `Status: ${status}`,
+    `Evidence Tier: ${candidate.evidenceTier}`,
+    `Evidence Kinds: ${candidate.evidenceKinds.join(", ") || "-"}`,
     "",
     "Means:",
     candidate.means,
@@ -608,21 +1128,22 @@ function proposedLanguageMarkdown(proposal: CheckProposal): string {
     "",
     `Check ID: ${proposal.checkId}`,
     `Generated At: ${proposal.generatedAt}`,
+    ...(proposal.about ? [`About: ${proposal.about}`, ""] : []),
     "",
     "These rows are not approved Project Language. `$check` applies only explicit user decisions.",
     "",
-    "| ID | Term | Aliases | Evidence |",
-    "|----|------|---------|----------|",
+    "| ID | Term | Tier | Aliases | Evidence |",
+    "|----|------|------|---------|----------|",
     ...proposal.concepts.map(
       (concept) =>
-        `| project:${concept.key} | ${concept.title} | ${concept.aliases.join(", ") || "-"} | ${concept.evidence.join(", ")} |`,
+        `| project:${concept.key} | ${concept.title} | ${concept.evidenceTier} | ${concept.aliases.join(", ") || "-"} | ${concept.evidence.join(", ")} |`,
     ),
     "",
   ].join("\n");
 }
 
 function conceptDecisionPrompts(proposal: CheckProposal): DecisionPrompt[] {
-  return proposal.concepts.slice(0, 8).map((concept) => ({
+  return proposal.concepts.filter((concept) => concept.evidenceTier === "strong").slice(0, maxApprovalQuestions).map((concept) => ({
     id: `concept:${concept.key}`,
     kind: "approval" as const,
     target: {
@@ -632,6 +1153,8 @@ function conceptDecisionPrompts(proposal: CheckProposal): DecisionPrompt[] {
     },
     question: `Approve "${concept.title}" (${concept.key}) as a Project Language concept?`,
     context: [
+      `Evidence tier: ${concept.evidenceTier}`,
+      `Evidence kinds: ${concept.evidenceKinds.join(", ") || "-"}`,
       `Evidence: ${concept.evidence.join(", ")}`,
       `Proposed meaning: ${concept.means}`,
       "Approve applies the proposed entry. Revise should provide a precise replacement meaning or JSON fields for term/key/means.",
@@ -648,6 +1171,7 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "generate
   generatedRefs: string[];
   proposalRefs: string[];
   questionRefs: string[];
+  proposal: CheckProposal;
 }): string {
   return [
     "# Krow Check Report",
@@ -665,7 +1189,26 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "generate
     "",
     `- Scanned files: ${result.summary.scannedFileCount}`,
     `- Proposed concepts: ${result.summary.proposedConceptCount}`,
+    `- Approval questions: ${result.summary.approvalQuestionCount}`,
+    `- Strong candidates: ${result.summary.strongCandidateCount}`,
+    `- Artifact candidates: ${result.summary.artifactCandidateCount}`,
+    `- Weak candidates: ${result.summary.weakCandidateCount}`,
     `- Findings: ${result.summary.findingCount}`,
+    ...(refs.proposal.about ? [`- About: ${refs.proposal.about}`] : []),
+    "",
+    "## Candidate Tiers",
+    "",
+    "### Strong",
+    "",
+    ...candidateTierList(refs.proposal, "strong"),
+    "",
+    "### Artifact",
+    "",
+    ...candidateTierList(refs.proposal, "artifact"),
+    "",
+    "### Weak",
+    "",
+    ...candidateTierList(refs.proposal, "weak"),
     "",
     "## Generated Evidence",
     "",
@@ -694,6 +1237,13 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "generate
   ].join("\n");
 }
 
+function candidateTierList(proposal: CheckProposal, tier: EvidenceTier): string[] {
+  const concepts = proposal.concepts.filter((concept) => concept.evidenceTier === tier);
+  return concepts.length > 0
+    ? concepts.map((concept) => `- ${concept.title} (${concept.key}): ${concept.evidence.join(", ")}`)
+    : ["- none"];
+}
+
 function markdownList(values: string[]): string[] {
   return values.length > 0 ? values.map((value) => `- ${value}`) : ["- none"];
 }
@@ -718,7 +1268,7 @@ function writeKrowFile(ref: string, content: string, rootDir: string): void {
   writeFileSync(absolute, content, "utf8");
 }
 
-export function runProjectCheck(input: { scope?: string; rootDir?: string }): ProjectCheckResult {
+export function runProjectCheck(input: { about?: string; scope?: string; rootDir?: string }): ProjectCheckResult {
   const rootDir = path.resolve(input.rootDir ?? process.cwd());
   const checkId = `check-${nowCompact()}`;
   const checkDir = checkRunDirPath(checkId);
@@ -742,10 +1292,12 @@ export function runProjectCheck(input: { scope?: string; rootDir?: string }): Pr
     inventory,
     languageTerms(language),
     conceptMaps.flatMap((conceptMap) => [conceptMap.key, conceptMap.title]),
+    input.about,
   );
   const proposal: CheckProposal = {
     checkId,
     generatedAt: nowIso(),
+    about: input.about,
     concepts,
   };
 
@@ -776,7 +1328,7 @@ export function runProjectCheck(input: { scope?: string; rootDir?: string }): Pr
     ...concepts.map((concept) => ({
       kind: "missing-concept" as const,
       severity: "info" as const,
-      message: `Candidate Project Language concept found from code: ${concept.title} (${concept.key})`,
+      message: `Candidate Project Language concept found from ${concept.evidenceTier} evidence: ${concept.title} (${concept.key})`,
       refs: concept.evidence,
     })),
     ...brokenAnchors(rootDir, conceptMaps),
@@ -794,12 +1346,16 @@ export function runProjectCheck(input: { scope?: string; rootDir?: string }): Pr
     summary: {
       scannedFileCount: inventory.fileCount,
       proposedConceptCount: concepts.length,
+      approvalQuestionCount: decisions.length,
+      strongCandidateCount: concepts.filter((concept) => concept.evidenceTier === "strong").length,
+      artifactCandidateCount: concepts.filter((concept) => concept.evidenceTier === "artifact").length,
+      weakCandidateCount: concepts.filter((concept) => concept.evidenceTier === "weak").length,
       findingCount: findings.length,
       writesOutsideKrow: false as const,
     },
   };
 
-  writeKrowFile(reportRef, reportMarkdown(resultWithoutRefs, { generatedRefs, proposalRefs, questionRefs }), rootDir);
+  writeKrowFile(reportRef, reportMarkdown(resultWithoutRefs, { generatedRefs, proposalRefs, questionRefs, proposal }), rootDir);
 
   return {
     ...resultWithoutRefs,

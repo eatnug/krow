@@ -458,6 +458,8 @@ Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
 
 ## Startup
 
+Treat \`$ARGUMENTS\` as an optional service or product description, not as a path. Use it to help krow separate product language from incidental code names.
+
 Run: \`${KROW_COMMAND_PLACEHOLDER} check "$ARGUMENTS"\`
 
 Parse the JSON response.
@@ -589,9 +591,9 @@ Then run \`${KROW_COMMAND_PLACEHOLDER} resume <workflow_id>\`.
 
 const CLAUDE_CHECK_COMMAND = `---
 description: Run the krow alignment check without editing source code.
-argument-hint: "[scope]"
+argument-hint: "[service or product description]"
 arguments:
-  - scope
+  - description
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
@@ -604,9 +606,9 @@ Run krow's repository alignment check.
 Use only the exact bootstrap command rendered in this file for krow control operations.
 Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
 
-Read the repository as evidence, but do not edit source code, tests, app files, package source, or business logic. The check flow may write only inside \`.krow\`.
+Treat the argument as an optional service or product description, not as a path. Read the repository as evidence, but do not edit source code, tests, app files, package source, or business logic. The check flow may write only inside \`.krow\`.
 
-Run: \`${KROW_COMMAND_PLACEHOLDER} check "$scope"\`
+Run: \`${KROW_COMMAND_PLACEHOLDER} check "$description"\`
 
 Parse the JSON response. Read the report and question refs.
 
@@ -708,7 +710,7 @@ Run krow's repository alignment check for {{args}}.
 Use only the exact bootstrap command rendered in this file for krow control operations.
 Do not replace it with \`npx\`, \`npm exec\`, or a bare \`krow\` command.
 
-Read the repository as evidence, but do not edit source code, tests, app files, package source, or business logic. The check flow may write only inside \`.krow\`.
+Treat {{args}} as an optional service or product description, not as a path. Read the repository as evidence, but do not edit source code, tests, app files, package source, or business logic. The check flow may write only inside \`.krow\`.
 
 Run via run_shell_command: \`${KROW_COMMAND_PLACEHOLDER} check "{{args}}"\`
 

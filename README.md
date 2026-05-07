@@ -86,7 +86,7 @@ Hosts can wire those signals into their own UI or automation.
 
 When `.krow/concepts/*.md` files exist, intake also matches related Project Concept Maps by concept key, title, alias, hierarchy, related concepts, business use cases, and code anchors. These maps are retrieval guides for likely code and test surfaces; they are not a hand-maintained dependency graph.
 
-`$check` runs the same idea outside a work request. It scans the repository as read-only evidence, writes rebuildable evidence and a check report under `.krow/`, proposes Project Language and Concept Map updates, then asks the user before applying approved `.krow` changes. It does not edit source code.
+`$check` runs the same idea outside a work request. It scans the repository as read-only evidence, writes rebuildable evidence and a check report under `.krow/`, proposes Project Language and Concept Map updates, then asks the user before applying approved `.krow` changes. Optional arguments are treated as a service or product description, not as a path. It does not edit source code.
 
 ### Bounded execution
 
@@ -147,7 +147,7 @@ Product intent documents can live alongside that runtime state:
 ```bash
 krow route --intent work "fix the release script"
 krow intake --intent work "fix the release script"
-krow check
+krow check --about "This service manages free and paid recommendation access."
 krow check-apply <checkId> -
 krow documents "fix the release script"
 krow review <workflowId>
