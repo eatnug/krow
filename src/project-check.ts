@@ -917,7 +917,7 @@ function buildRepositoryUnderstanding(
 
   return {
     productName: packageName(rootDir),
-    productPurpose: about ?? packageDescription(rootDir),
+    productPurpose: packageDescription(rootDir),
     repositoryKind: inferRepositoryKind(rootDir, files),
     sourceRoots: topLevelRoots(files, (file) => file.kind === "source"),
     testRoots: topLevelRoots(files, (file) => file.kind === "test"),

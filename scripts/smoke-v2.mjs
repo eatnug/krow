@@ -134,6 +134,9 @@ const systemMap = readFileSync(path.join(root, ".krow/system/map.md"), "utf8");
 if (!systemMap.includes("## System Documents") || !systemMap.includes("DOC:")) {
   throw new Error("check-apply should update the System Map with approved System Documents");
 }
+if (systemMap.includes("Smoke project with story and plugin concepts")) {
+  throw new Error("System Map should not promote check about input into repository purpose");
+}
 const approvedDocRef = checkDraft.systemDocuments[0].id.replace(/^DOC:/, "");
 assertExists(`.krow/system/docs/${approvedDocRef}.md`);
 
