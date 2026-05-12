@@ -7,11 +7,12 @@
 The npm package is `krow-cli`. The installed command is `krow`.
 
 ```bash
-# bootstrap krow in a repo
+# bootstrap krow and install all supported agent commands
 npx --yes krow-cli@latest init
 
-# install agent commands too
-npx --yes krow-cli@latest init --agents codex,claude,gemini
+# choose a smaller surface when needed
+npx --yes krow-cli@latest init --agents codex
+npx --yes krow-cli@latest init --agents none
 ```
 
 For an existing codebase:
