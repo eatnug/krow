@@ -1,6 +1,6 @@
 # Templates
 
-Part 2 of the v2 plan. Previous: [Document Model](document-model.md). Next: [Check Workflow](check-workflow.md).
+Previous: [Document Model](document-model.md). Next: [Check Workflow](check-workflow.md).
 
 krow uses bundled canonical templates to generate project documents.
 

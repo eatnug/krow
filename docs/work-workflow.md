@@ -1,6 +1,6 @@
 # Work Workflow
 
-Part 4 of the v2 plan. Previous: [Check Workflow](check-workflow.md). Next: [Runtime And Agents](runtime-and-agents.md).
+Previous: [Check Workflow](check-workflow.md). Next: [Runtime And Agents](runtime-and-agents.md).
 
 `$work` executes code and test changes using Glossary and System Model as starting context.
 

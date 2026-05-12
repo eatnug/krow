@@ -1,8 +1,8 @@
-# krow v2 Master Plan
+# krow Design Notes
 
-This is the entry point for the v2 plan.
+This is the entry point for the current design notes.
 
-v2 focuses on one product goal:
+krow focuses on one product goal:
 
 ```text
 Describe software in agreed natural language and keep that description aligned with code, tests, and work.
@@ -58,7 +58,7 @@ Glossary + System Model
    Defines bundled canonical template source files used to generate krow documents.
 
 3. [Check Workflow](check-workflow.md)
-   Explains how `$check` aligns documented understanding with observed understanding.
+   Explains how `$check` runs a repository understanding workflow.
 
 4. [Work Workflow](work-workflow.md)
    Explains how `$work` turns a request into Work Docs, Tasks, code/tests, Review, and System Model updates.
@@ -84,4 +84,4 @@ $work <request>
 
 ## Source Of Truth
 
-This file is the v2 overview and index. The linked documents are the detailed plans.
+This file is the design overview and index. The linked documents are the detailed notes.

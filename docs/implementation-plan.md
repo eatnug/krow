@@ -1,8 +1,8 @@
 # Implementation Plan
 
-Part 6 of the v2 plan. Previous: [Runtime And Agents](runtime-and-agents.md).
+Previous: [Runtime And Agents](runtime-and-agents.md).
 
-Implement v2 in small end-to-end slices.
+Implement krow in small end-to-end slices.
 
 ## Track 1: Document Model
 
@@ -96,23 +96,32 @@ Adapters render the same file-based invocation into each agent's supported surfa
 
 ## Track 5: References And Consistency
 
-Build the reference scanner and consistency checker together.
+Build check as a repository understanding workflow, not a direct document generator.
 
-Inputs:
+Code-owned inputs:
 
 ```text
-optional about hint
+user-provided context
 file inventory
-exported symbols
-test names
-API routes
-CLI commands
-UI components
-data models
 package metadata
+existing .krow documents
+reference targets and file existence
+source and test candidates
 ```
 
-Checks:
+AI-owned outputs:
+
+```text
+orientation
+reading plan
+code trace
+draft understanding
+gap review
+proposal wording
+user questions
+```
+
+Code-owned checks:
 
 ```text
 undefined terms in Work Docs or System Documents
@@ -120,11 +129,10 @@ missing System Documents for observed features or responsibilities
 missing System Statements for observed behavior or test intent
 missing referenced files
 System Statements without verification references where tests are expected
-story-facing code names that lack Glossary mapping
 possible duplicate terms or statements
 possible term meaning conflicts
 stale System Documents after code changes
 Work Docs completed without Review verification
 ```
 
-Reference candidates are not project truth. Project meaning is approved through Glossary and System Model documents.
+Reference candidates and agent proposals are not project truth. Project meaning is approved through Glossary and System Model documents.

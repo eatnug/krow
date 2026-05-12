@@ -62,7 +62,7 @@ Use `$check` later when krow is added to an existing codebase.
 $check about: React app. Free and paid subscription states control feature access.
 ```
 
-It reads the repository, drafts `.krow/system/glossary.md`, `.krow/system/map.md`, and `.krow/system/docs/*.md`, then asks what should be approved.
+It runs a repository understanding session: collect evidence, write a reading plan, trace code, draft understanding, identify gaps, and apply only approved Glossary/System Model updates.
 
 ## Document Shape
 
@@ -124,8 +124,10 @@ References:
   PRD, Spec, Plan, Task, and Review for a change
 
 .krow/check/<check-id>/
-  brownfield scan, drafts, decisions, and report
+  evidence, reading plan, understanding drafts, decisions, and report
 ```
+
+Design notes live in [docs/](docs/).
 
 ## Runtime
 

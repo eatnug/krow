@@ -119,4 +119,4 @@ Completion requires:
 - System Model updates proposed or applied when code meaning changed
 - concise final report with outputs, evidence, and remaining risks
 
-For the full v2 design, read [docs/v2/MASTERPLAN.md](docs/v2/MASTERPLAN.md).
+For the current design notes, read [docs/README.md](docs/README.md).

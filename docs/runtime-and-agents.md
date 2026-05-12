@@ -1,6 +1,6 @@
 # Runtime And Agents
 
-Part 5 of the v2 plan. Previous: [Work Workflow](work-workflow.md). Next: [Implementation Plan](implementation-plan.md).
+Previous: [Work Workflow](work-workflow.md). Next: [Implementation Plan](implementation-plan.md).
 
 krow uses a deterministic runner plus thin agent adapters.
 
@@ -164,6 +164,23 @@ Output
 ```
 
 The agent should fill missing context when it can do so from repository evidence. It should ask the user when the missing context is a product meaning decision, approval, or externally unknowable fact.
+
+## Code AI User Boundary
+
+Agent workflows split ownership this way:
+
+```text
+Code
+  Runs the deterministic state machine, gathers objective evidence, validates output shape, stores artifacts, and applies approved updates.
+
+AI
+  Reads evidence, interprets software meaning, plans what to inspect next, drafts project-language documents, and explains gaps.
+
+User
+  Approves names, meanings, boundaries, ownership, product intent, and other decisions that repository evidence cannot settle.
+```
+
+For `$check`, this means the runner can collect repository material and store artifacts, while the agent writes the reading plan and understanding from the evidence it actually reads.
 
 This shape applies to `$check`, `$work`, and future skills. The specific inputs differ, but the loop stays the same:
 

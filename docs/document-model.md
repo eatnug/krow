@@ -1,8 +1,8 @@
 # Document Model
 
-Part 1 of the v2 plan. Start at [Master Plan](MASTERPLAN.md). Next: [Templates](templates.md).
+Start at [Design Notes](README.md). Next: [Templates](templates.md).
 
-v2 documents are Markdown with fixed labels.
+krow documents are Markdown with fixed labels.
 
 Natural-language content can be written by people or agents, but the document structure must be deterministic enough for code to generate, parse, retrieve, and validate.
 

@@ -86,16 +86,32 @@ const SHARED_CHECK_LOOP = `## Startup
 
 Treat the argument as user-provided context for this check.
 
-Derive proposed names, terms, and System Documents only from user-provided context, repository evidence, or existing project documents. When a readable name is missing, synthesize it from the sourced material that created the proposal.
-
 Run with the user seed in place of \`<user seed>\`:
 \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
 
 Parse the JSON response and read the report refs.
 
-Each check step is input -> operation -> output.
+## Responsibility Boundary
 
-Use the signal refs, user seed, current \`.krow\` documents, and repository evidence as available input. Decide what context is needed for the current step output. If context is missing, gather it from the repository when possible. Ask the user when the missing context is a meaning, scope, ownership, approval, or external decision. Only approved structured changes become Glossary or System Documents.
+Code controls the workflow, stores evidence, validates artifacts, and applies approved updates.
+
+AI reads repository evidence, writes the reading plan, explains the software in project language, drafts proposals, and identifies gaps.
+
+User approves names, meanings, boundaries, ownership, product intent, and decisions that repository evidence cannot settle.
+
+## Check Work
+
+Use the report refs, user context, current \`.krow\` documents, and repository files as available input.
+
+Read enough evidence to answer:
+
+- what this repository appears to be
+- where future agents should start reading
+- which flows, modules, tests, or docs were actually inspected
+- which Glossary or System Document proposals are backed by evidence
+- which names, boundaries, or meanings need user approval
+
+Write or revise check artifacts only inside \`.krow\`. Keep proposed names, terms, and System Documents sourced from user context, repository evidence, or existing project documents. When a readable name is missing, synthesize it from the sourced material that created the proposal.
 
 If decisions are present, present the full decision bundle to the user in one message. Apply only explicit approve, revise, or reject decisions:
 
@@ -105,7 +121,8 @@ During \`$check\`, durable System changes go through the runner only:
 
 - create or refresh proposals with \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
 - apply approved proposals with \`${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> <json|path|->\`
-- if the user names a missing first-class term or document after review, run a new check with the refined seed so the runner records the proposal, decision, apply result, and audit report
+- if repository reading shows that the raw proposals are too shallow, revise or reject them instead of approving them as-is
+- if the user names a missing first-class term or document after review, run a refined check so the runner records the proposal, decision, apply result, and audit report
 
 \`$check\` writes only inside \`.krow\`. Treat generated apply reports as runner-owned audit output.
 `;
