@@ -1,6 +1,6 @@
 {
   "name": "krow-cli",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "description": "A document-driven workflow for coding agents",
   "type": "module",
   "bin": {

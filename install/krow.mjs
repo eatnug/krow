@@ -29,8 +29,6 @@ const SYSTEM_MAP_SEED = `# System Map
 
 This file routes agents to system documents that describe the software in the approved project language.
 
-## Documents
-
 `;
 
 const KROW_BOOTSTRAP = `#!/usr/bin/env node

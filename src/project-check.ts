@@ -1613,6 +1613,12 @@ function replaceMarkdownSection(content: string, heading: string, lines: string[
   return `${content.trimEnd()}\n\n${section}`.trimEnd();
 }
 
+function removeEmptyMarkdownSection(content: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\n?## ${escapedHeading}\\n\\s*(?=\\n## |$)`, "m");
+  return content.replace(pattern, "\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+}
+
 function updateSystemMap(indexText: string, understanding: RepositoryUnderstanding, documents: SystemDocumentDraft[]): string {
   let content = indexText.trimEnd();
   if (!content) {
@@ -1623,6 +1629,7 @@ function updateSystemMap(indexText: string, understanding: RepositoryUnderstandi
     ].join("\n");
   }
 
+  content = removeEmptyMarkdownSection(content, "Documents");
   content = replaceMarkdownSection(content, "Repository", [
     `Product: ${understanding.productName ?? "(unknown)"}`,
     `Purpose: ${understanding.productPurpose ?? "(unknown)"}`,
