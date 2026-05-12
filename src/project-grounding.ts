@@ -1,18 +1,18 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type {
-  LanguageGrounding,
-  LanguageNamespace,
-  ProjectConceptMapMatch,
-  LanguageStatement,
-  LanguageTerm,
-  LanguageTermMatch,
+  ProjectGrounding,
+  GlossaryNamespace,
+  SystemDocumentMatch,
+  GroundingStatement,
+  GlossaryTerm,
+  GlossaryTermMatch,
   RouteConfidence,
 } from "./types.js";
-import { absolutePath, conceptIndexPath, conceptsDirPath, projectLanguagePath } from "./workflow-files.js";
+import { absolutePath, systemMapPath, systemDocsPath, glossaryPath } from "./workflow-files.js";
 
 const SEED_MARKER = "This file defines the approved local language for this codebase.";
 
-const builtinCoreTerms: Array<Omit<LanguageTerm, "status" | "source">> = [
+const builtinCoreTerms: Array<Omit<GlossaryTerm, "status" | "source">> = [
   term("core:function", "core", "Function", ["function", "method", "함수", "메서드"]),
   term("core:class", "core", "Class", ["class", "클래스"]),
   term("core:object", "core", "Object", ["object", "객체"]),
@@ -46,7 +46,7 @@ const builtinCoreTerms: Array<Omit<LanguageTerm, "status" | "source">> = [
   term("core:session", "core", "Session", ["session", "세션"]),
 ];
 
-const builtinTechTerms: Array<Omit<LanguageTerm, "status" | "source">> = [
+const builtinTechTerms: Array<Omit<GlossaryTerm, "status" | "source">> = [
   term("tech:react", "tech", "React", ["react"]),
   term("tech:rust", "tech", "Rust", ["rust"]),
   term("tech:tauri", "tech", "Tauri", ["tauri"]),
@@ -101,11 +101,11 @@ const proposedStopWords = new Set([
 
 function term(
   id: string,
-  namespace: LanguageNamespace,
+  namespace: GlossaryNamespace,
   canonical: string,
   aliases: string[] = [],
   evidence: string[] = [],
-): Omit<LanguageTerm, "status" | "source"> {
+): Omit<GlossaryTerm, "status" | "source"> {
   return { id, namespace, canonical, aliases, evidence };
 }
 
@@ -113,7 +113,7 @@ function relation(relationName: string, patterns: RegExp[]) {
   return { relation: relationName, patterns };
 }
 
-function approvedBuiltinTerms(): LanguageTerm[] {
+function approvedBuiltinTerms(): GlossaryTerm[] {
   return [...builtinCoreTerms, ...builtinTechTerms].map((item) => ({
     ...item,
     status: "approved" as const,
@@ -121,7 +121,7 @@ function approvedBuiltinTerms(): LanguageTerm[] {
   }));
 }
 
-function namespaceFromHeading(heading: string): LanguageNamespace | undefined {
+function namespaceFromHeading(heading: string): GlossaryNamespace | undefined {
   const normalized = heading.toLowerCase();
   if (normalized.includes("core")) {
     return "core";
@@ -135,7 +135,7 @@ function namespaceFromHeading(heading: string): LanguageNamespace | undefined {
   return undefined;
 }
 
-function namespaceFromId(id: string, fallback: LanguageNamespace | undefined): LanguageNamespace {
+function namespaceFromId(id: string, fallback: GlossaryNamespace | undefined): GlossaryNamespace {
   if (id.startsWith("core:")) {
     return "core";
   }
@@ -175,7 +175,7 @@ function splitAliases(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function normalizeId(namespace: LanguageNamespace, canonical: string, id?: string): string {
+function normalizeId(namespace: GlossaryNamespace, canonical: string, id?: string): string {
   const candidate = id && id !== "-" ? id : "";
   if (candidate) {
     return candidate.includes(":") ? candidate : `${namespace}:${slugify(candidate)}`;
@@ -183,7 +183,7 @@ function normalizeId(namespace: LanguageNamespace, canonical: string, id?: strin
   return `${namespace}:${slugify(canonical)}`;
 }
 
-function parseTableRows(lines: string[], startIndex: number, namespace: LanguageNamespace | undefined): { terms: LanguageTerm[]; nextIndex: number } {
+function parseTableRows(lines: string[], startIndex: number, namespace: GlossaryNamespace | undefined): { terms: GlossaryTerm[]; nextIndex: number } {
   const headers = splitMarkdownRow(lines[startIndex]);
   const lowerHeaders = headers.map((header) => header.toLowerCase());
   const idIndex = headerIndex(lowerHeaders, ["id", "term id", "key"]);
@@ -191,7 +191,7 @@ function parseTableRows(lines: string[], startIndex: number, namespace: Language
   const aliasIndex = headerIndex(lowerHeaders, ["aliases", "alias", "use instead of", "also called"]);
   const evidenceIndex = headerIndex(lowerHeaders, ["evidence", "binding", "code evidence", "source"]);
   const statusIndex = headerIndex(lowerHeaders, ["status"]);
-  const terms: LanguageTerm[] = [];
+  const terms: GlossaryTerm[] = [];
   let index = startIndex + 2;
 
   while (index < lines.length && lines[index].trim().startsWith("|")) {
@@ -224,7 +224,7 @@ function parseTableRows(lines: string[], startIndex: number, namespace: Language
       canonical,
       aliases,
       status,
-      source: "language_file",
+      source: "glossary_file",
       evidence,
     });
     index += 1;
@@ -233,10 +233,10 @@ function parseTableRows(lines: string[], startIndex: number, namespace: Language
   return { terms, nextIndex: index };
 }
 
-function parseLanguageMarkdown(content: string): LanguageTerm[] {
+function parseGlossaryMarkdown(content: string): GlossaryTerm[] {
   const lines = content.split(/\r?\n/);
-  const terms: LanguageTerm[] = [];
-  let currentNamespace: LanguageNamespace | undefined;
+  const terms: GlossaryTerm[] = parseGlossarySections(content);
+  let currentNamespace: GlossaryNamespace | undefined;
   let index = 0;
 
   while (index < lines.length) {
@@ -261,47 +261,102 @@ function parseLanguageMarkdown(content: string): LanguageTerm[] {
   return terms;
 }
 
-function loadLanguageTerms(rootDir: string): {
-  terms: LanguageTerm[];
+function parseGlossarySections(content: string): GlossaryTerm[] {
+  const terms: GlossaryTerm[] = [];
+  const sections = content.split(/^##\s+/m).slice(1);
+
+  for (const section of sections) {
+    const [rawTitle = "", ...bodyLines] = section.split(/\r?\n/);
+    const canonical = rawTitle.trim();
+    const body = bodyLines.join("\n");
+    if (!canonical || canonical.startsWith("<")) {
+      continue;
+    }
+
+    const id = body.match(/^ID:\s*(TERM:[^\s]+)\s*$/m)?.[1]?.trim() ?? `TERM:${slugify(canonical)}`;
+    const statusValue = body.match(/^Status:\s*([^\n]+)$/m)?.[1]?.trim().toLowerCase();
+    const status =
+      statusValue === "proposed" || statusValue === "unresolved" || statusValue === "deprecated"
+        ? statusValue
+        : "approved";
+
+    terms.push({
+      id,
+      namespace: "project",
+      canonical,
+      aliases: markdownListAfterLabel(body, "Aliases"),
+      status,
+      source: "glossary_file",
+      evidence: markdownListAfterLabel(body, "References"),
+    });
+  }
+
+  return terms;
+}
+
+function markdownListAfterLabel(content: string, label: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim().toLowerCase() === `${label.toLowerCase()}:`);
+  if (start < 0) {
+    return [];
+  }
+
+  const values: string[] = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (!trimmed) {
+      break;
+    }
+    if (/^[A-Za-z][A-Za-z ]{1,40}:\s*/.test(trimmed) || /^#{1,6}\s+/.test(trimmed)) {
+      break;
+    }
+    const item = trimmed.match(/^[-*]\s+(.+)$/)?.[1]?.trim();
+    if (item && item !== "(none)" && !item.startsWith("<")) {
+      values.push(item);
+    }
+  }
+  return values;
+}
+
+function loadGlossaryTerms(rootDir: string): {
+  terms: GlossaryTerm[];
   status: "missing" | "seed" | "custom";
-  languageRef: string;
+  glossaryRef: string;
 } {
-  const languageRef = projectLanguagePath();
-  const filePath = absolutePath(languageRef, rootDir);
+  const glossaryRef = glossaryPath();
+  const filePath = absolutePath(glossaryRef, rootDir);
   const builtinTerms = approvedBuiltinTerms();
 
   if (!existsSync(filePath)) {
-    return { terms: builtinTerms, status: "missing", languageRef };
+    return { terms: builtinTerms, status: "missing", glossaryRef };
   }
 
   const content = readFileSync(filePath, "utf8");
-  const parsed = parseLanguageMarkdown(content);
+  const parsed = parseGlossaryMarkdown(content);
   const customTerms = parsed.filter((item) => item.status === "approved");
   const status = parsed.length === 0 && content.includes(SEED_MARKER) ? "seed" : "custom";
-  return { terms: mergeTerms([...builtinTerms, ...customTerms]), status, languageRef };
+  return { terms: mergeTerms([...builtinTerms, ...customTerms]), status, glossaryRef };
 }
 
-type ParsedConceptMap = {
+type ParsedSystemDocument = {
   key: string;
   title: string;
   ref: string;
   kind?: string;
   layer?: string;
-  status?: LanguageTerm["status"];
+  status?: GlossaryTerm["status"];
   aliases: string[];
-  relatedConcepts: string[];
-  codeAnchors: string[];
+  relatedTerms: string[];
+  references: string[];
   searchFields: Array<{ field: string; value: string }>;
 };
 
-const conceptLabels = new Set([
+const systemDocumentLabels = new Set([
   "aliases",
   "boundary",
   "boundaries",
-  "business use cases",
-  "code anchors",
-  "connected product concepts",
   "hierarchy",
+  "id",
   "key",
   "kind",
   "layer",
@@ -309,10 +364,13 @@ const conceptLabels = new Set([
   "notes",
   "open questions",
   "purpose",
-  "related concepts",
+  "references",
   "responsibilities",
   "status",
+  "statement",
+  "summary",
   "system role",
+  "terms",
   "used in",
 ]);
 
@@ -326,7 +384,7 @@ function labelLine(line: string): { label: string; value: string } | undefined {
     return undefined;
   }
   const label = normalizeLabel(match[1]);
-  if (!conceptLabels.has(label)) {
+  if (!systemDocumentLabels.has(label)) {
     return undefined;
   }
   return { label, value: match[2].trim() };
@@ -383,7 +441,8 @@ function firstLabelValue(lines: string[], label: string): string | undefined {
   return labelValues(lines, label)[0];
 }
 
-function normalizeConceptStatus(value: string | undefined): LanguageTerm["status"] | undefined {
+function normalizeSystemDocumentStatus(value: string | undefined): GlossaryTerm["status"] | undefined {
+  value = value?.toLowerCase();
   if (value === "approved" || value === "proposed" || value === "unresolved" || value === "deprecated") {
     return value;
   }
@@ -394,36 +453,35 @@ function firstMarkdownHeading(content: string): string | undefined {
   return content.match(/^#\s+(.+)$/m)?.[1]?.trim();
 }
 
-function conceptKeyFromRef(ref: string): string {
-  return ref.split("/").pop()?.replace(/\.md$/i, "") ?? "concept";
+function systemDocumentKeyFromRef(ref: string): string {
+  return ref.split("/").pop()?.replace(/\.md$/i, "") ?? "system-document";
 }
 
-function parseProjectConceptMap(ref: string, content: string): ParsedConceptMap {
+function parseProjectSystemDocument(ref: string, content: string): ParsedSystemDocument {
   const lines = content.split(/\r?\n/);
-  const key = firstLabelValue(lines, "Key") ?? conceptKeyFromRef(ref);
+  const rawId = firstLabelValue(lines, "ID");
+  const key = firstLabelValue(lines, "Key") ?? rawId?.replace(/^DOC:/, "") ?? systemDocumentKeyFromRef(ref);
   const title = firstMarkdownHeading(content) ?? key;
   const aliases = labelValues(lines, "Aliases");
   const hierarchy = labelValues(lines, "Hierarchy");
-  const relatedConcepts = unique([
+  const relatedTerms = unique([
     ...hierarchy,
-    ...labelValues(lines, "Related Concepts"),
-    ...labelValues(lines, "Connected Product Concepts"),
-    ...labelValues(lines, "Business Use Cases"),
+    ...labelValues(lines, "Terms"),
   ]);
-  const codeAnchors = labelValues(lines, "Code Anchors");
+  const references = labelValues(lines, "References");
   const kind = firstLabelValue(lines, "Kind");
   const layer = firstLabelValue(lines, "Layer");
   const systemRole = firstLabelValue(lines, "System Role");
-  const status = normalizeConceptStatus(firstLabelValue(lines, "Status"));
-  const purpose = firstLabelValue(lines, "Purpose");
+  const status = normalizeSystemDocumentStatus(firstLabelValue(lines, "Status"));
+  const purpose = firstLabelValue(lines, "Purpose") ?? firstLabelValue(lines, "Summary");
   const means = firstLabelValue(lines, "Means");
 
   const searchFields = [
     { field: "key", value: key },
     { field: "title", value: title },
     ...aliases.map((value) => ({ field: "alias", value })),
-    ...relatedConcepts.map((value) => ({ field: "related", value })),
-    ...codeAnchors.map((value) => ({ field: "codeAnchor", value })),
+    ...relatedTerms.map((value) => ({ field: "related", value })),
+    ...references.map((value) => ({ field: "reference", value })),
     ...(kind ? [{ field: "kind", value: kind }] : []),
     ...(layer ? [{ field: "layer", value: layer }] : []),
     ...(systemRole ? [{ field: "systemRole", value: systemRole }] : []),
@@ -439,14 +497,14 @@ function parseProjectConceptMap(ref: string, content: string): ParsedConceptMap 
     layer,
     status,
     aliases,
-    relatedConcepts,
-    codeAnchors,
+    relatedTerms,
+    references,
     searchFields,
   };
 }
 
-function loadProjectConceptMaps(rootDir: string): ParsedConceptMap[] {
-  const dirRef = conceptsDirPath();
+function loadProjectSystemDocuments(rootDir: string): ParsedSystemDocument[] {
+  const dirRef = systemDocsPath();
   const dirPath = absolutePath(dirRef, rootDir);
   if (!existsSync(dirPath)) {
     return [];
@@ -456,7 +514,7 @@ function loadProjectConceptMaps(rootDir: string): ParsedConceptMap[] {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name !== "index.md")
     .map((entry) => {
       const ref = `${dirRef}/${entry.name}`;
-      return parseProjectConceptMap(ref, readFileSync(absolutePath(ref, rootDir), "utf8"));
+      return parseProjectSystemDocument(ref, readFileSync(absolutePath(ref, rootDir), "utf8"));
     });
 }
 
@@ -473,7 +531,7 @@ function normalizedTokenSet(value: string): string[] {
   return unique(normalizeSearchText(value).split(" ").filter((token) => token.length > 1)).sort();
 }
 
-function alignedConceptFieldWithTerm(fieldValue: string, termText: string): boolean {
+function alignedSystemDocumentFieldWithTerm(fieldValue: string, termText: string): boolean {
   const field = normalizeSearchText(fieldValue);
   const term = normalizeSearchText(termText);
   if (!field || !term) {
@@ -488,7 +546,7 @@ function alignedConceptFieldWithTerm(fieldValue: string, termText: string): bool
   return fieldTokens.length >= 2 && fieldTokens.join("|") === termTokens.join("|");
 }
 
-function matchConceptField(message: string, field: string): { matchedText: string; confidence: RouteConfidence } | undefined {
+function matchSystemDocumentField(message: string, field: string): { matchedText: string; confidence: RouteConfidence } | undefined {
   if (field.length < 3) {
     return undefined;
   }
@@ -515,27 +573,27 @@ function matchConceptField(message: string, field: string): { matchedText: strin
   return undefined;
 }
 
-function matchProjectConceptMaps(
+function matchProjectSystemDocuments(
   message: string,
-  conceptMaps: ParsedConceptMap[],
-  matchedTerms: LanguageTermMatch[],
-  proposedTerms: LanguageTerm[],
-): ProjectConceptMapMatch[] {
+  systemDocuments: ParsedSystemDocument[],
+  matchedTerms: GlossaryTermMatch[],
+  proposedTerms: GlossaryTerm[],
+): SystemDocumentMatch[] {
   const termTexts = unique([
     ...matchedTerms.flatMap((term) => [term.id, term.canonical, ...term.aliases]),
     ...proposedTerms.map((term) => term.canonical),
   ]);
 
-  const matchesByConcept: ProjectConceptMapMatch[] = [];
+  const matchesBySystemDocument: SystemDocumentMatch[] = [];
 
-  for (const conceptMap of conceptMaps) {
-    const directMatches = conceptMap.searchFields
-      .map((item) => ({ ...item, match: matchConceptField(message, item.value) }))
+  for (const systemDocument of systemDocuments) {
+    const directMatches = systemDocument.searchFields
+      .map((item) => ({ ...item, match: matchSystemDocumentField(message, item.value) }))
       .filter((item): item is { field: string; value: string; match: { matchedText: string; confidence: RouteConfidence } } =>
         Boolean(item.match),
       );
-    const termMatches = conceptMap.searchFields
-      .filter((item) => termTexts.some((termText) => alignedConceptFieldWithTerm(item.value, termText)))
+    const termMatches = systemDocument.searchFields
+      .filter((item) => termTexts.some((termText) => alignedSystemDocumentFieldWithTerm(item.value, termText)))
       .map((item) => ({
         field: `term:${item.field}`,
         value: item.value,
@@ -547,33 +605,33 @@ function matchProjectConceptMaps(
       continue;
     }
 
-    const match: ProjectConceptMapMatch = {
-      key: conceptMap.key,
-      title: conceptMap.title,
-      ref: conceptMap.ref,
-      aliases: conceptMap.aliases,
-      relatedConcepts: conceptMap.relatedConcepts,
-      codeAnchors: conceptMap.codeAnchors,
+    const match: SystemDocumentMatch = {
+      key: systemDocument.key,
+      title: systemDocument.title,
+      ref: systemDocument.ref,
+      aliases: systemDocument.aliases,
+      relatedTerms: systemDocument.relatedTerms,
+      references: systemDocument.references,
       matchedText: matches[0].match.matchedText,
       matchFields: unique(matches.map((item) => item.field)),
     };
-    if (conceptMap.kind !== undefined) {
-      match.kind = conceptMap.kind;
+    if (systemDocument.kind !== undefined) {
+      match.kind = systemDocument.kind;
     }
-    if (conceptMap.layer !== undefined) {
-      match.layer = conceptMap.layer;
+    if (systemDocument.layer !== undefined) {
+      match.layer = systemDocument.layer;
     }
-    if (conceptMap.status !== undefined) {
-      match.status = conceptMap.status;
+    if (systemDocument.status !== undefined) {
+      match.status = systemDocument.status;
     }
-    matchesByConcept.push(match);
+    matchesBySystemDocument.push(match);
   }
 
-  return matchesByConcept.slice(0, 8);
+  return matchesBySystemDocument.slice(0, 8);
 }
 
-function mergeTerms(terms: LanguageTerm[]): LanguageTerm[] {
-  const seen = new Map<string, LanguageTerm>();
+function mergeTerms(terms: GlossaryTerm[]): GlossaryTerm[] {
+  const seen = new Map<string, GlossaryTerm>();
   for (const item of terms) {
     const existing = seen.get(item.id);
     if (!existing) {
@@ -615,8 +673,8 @@ function findPhrase(message: string, phrase: string): { index: number; matchedTe
   return index >= 0 ? { index, matchedText: message.slice(index, index + phrase.length) } : undefined;
 }
 
-function matchTerms(message: string, terms: LanguageTerm[]): Array<LanguageTermMatch & { index: number }> {
-  const matches: Array<LanguageTermMatch & { index: number }> = [];
+function matchTerms(message: string, terms: GlossaryTerm[]): Array<GlossaryTermMatch & { index: number }> {
+  const matches: Array<GlossaryTermMatch & { index: number }> = [];
   const sortedTerms = [...terms].sort((left, right) => right.canonical.length - left.canonical.length);
 
   for (const item of sortedTerms) {
@@ -699,7 +757,7 @@ function addCandidateWithSplits(candidates: Set<string>, value: string): void {
   }
 }
 
-function extractProposedTerms(message: string, matchedTerms: LanguageTermMatch[]): LanguageTerm[] {
+function extractProposedTerms(message: string, matchedTerms: GlossaryTermMatch[]): GlossaryTerm[] {
   const candidates = new Set<string>();
   const matchedTexts = matchedTerms.flatMap((item) => [item.canonical, item.matchedText, ...item.aliases]).map((item) => item.toLowerCase());
 
@@ -733,7 +791,7 @@ function extractProposedTerms(message: string, matchedTerms: LanguageTermMatch[]
     }));
 }
 
-function termStatus(subject: LanguageTermMatch | LanguageTerm, object?: LanguageTermMatch | LanguageTerm): LanguageStatement["status"] {
+function termStatus(subject: GlossaryTermMatch | GlossaryTerm, object?: GlossaryTermMatch | GlossaryTerm): GroundingStatement["status"] {
   if (subject.status === "approved" && (!object || object.status === "approved")) {
     return "grounded";
   }
@@ -751,10 +809,10 @@ function sourceWindow(message: string, index: number): string {
 
 function inferRelationStatements(
   message: string,
-  matchedTerms: Array<LanguageTermMatch & { index: number }>,
-  proposedTerms: LanguageTerm[],
-): LanguageStatement[] {
-  const statements: LanguageStatement[] = matchedTerms.map((item) => ({
+  matchedTerms: Array<GlossaryTermMatch & { index: number }>,
+  proposedTerms: GlossaryTerm[],
+): GroundingStatement[] {
+  const statements: GroundingStatement[] = matchedTerms.map((item) => ({
     subject: "request",
     relation: "mentions",
     object: item.id,
@@ -810,7 +868,7 @@ function inferRelationStatements(
   return uniqueStatements(statements);
 }
 
-function uniqueStatements(statements: LanguageStatement[]): LanguageStatement[] {
+function uniqueStatements(statements: GroundingStatement[]): GroundingStatement[] {
   const keys = new Set<string>();
   return statements.filter((statement) => {
     const key = `${statement.subject}|${statement.relation}|${statement.object}`;
@@ -822,19 +880,19 @@ function uniqueStatements(statements: LanguageStatement[]): LanguageStatement[] 
   });
 }
 
-function formatTerms(terms: LanguageTerm[]): string {
+function formatTerms(terms: GlossaryTerm[]): string {
   return terms
     .slice(0, 10)
     .map((item) => item.canonical)
     .join(", ");
 }
 
-export function groundRequestLanguage(message: string, rootDir = process.cwd()): LanguageGrounding {
-  const loaded = loadLanguageTerms(rootDir);
+export function groundRequestProjectContext(message: string, rootDir = process.cwd()): ProjectGrounding {
+  const loaded = loadGlossaryTerms(rootDir);
   const matchedTerms = matchTerms(message, loaded.terms);
   const proposedTerms = extractProposedTerms(message, matchedTerms);
-  const conceptMaps = loadProjectConceptMaps(rootDir);
-  const relatedConceptMaps = matchProjectConceptMaps(message, conceptMaps, matchedTerms, proposedTerms);
+  const systemDocuments = loadProjectSystemDocuments(rootDir);
+  const relatedSystemDocuments = matchProjectSystemDocuments(message, systemDocuments, matchedTerms, proposedTerms);
   const statements = inferRelationStatements(message, matchedTerms, proposedTerms);
   const unresolvedRelationCount = statements.filter((item) => item.status === "unresolved").length;
   const unresolvedRelationsRequireClarification = unresolvedRelationCount > 0 && proposedTerms.length > 0;
@@ -843,7 +901,7 @@ export function groundRequestLanguage(message: string, rootDir = process.cwd()):
   const questions: string[] = [];
   const notes: string[] = [
     "language grounding is controlled vocabulary plus evidence, not a layer-by-layer translation map",
-    "core terms are general software concepts; tech terms name specific stacks/tools; project terms name product/domain concepts",
+    "core terms are general software building blocks; tech terms name specific stacks/tools; project terms name product/domain language",
   ];
 
   if (loaded.status !== "custom" && proposedTerms.length > 0) {
@@ -864,27 +922,27 @@ export function groundRequestLanguage(message: string, rootDir = process.cwd()):
     );
   }
 
-  if (relatedConceptMaps.length > 0) {
+  if (relatedSystemDocuments.length > 0) {
     notes.push(
-      `related Project Concept Maps found: ${relatedConceptMaps.map((conceptMap) => conceptMap.key).join(", ")}`,
+      `related System Documents found: ${relatedSystemDocuments.map((systemDocument) => systemDocument.key).join(", ")}`,
     );
   }
 
   return {
     summary: {
-      languageRef: loaded.languageRef,
-      conceptIndexRef: conceptIndexPath(),
+      glossaryRef: loaded.glossaryRef,
+      systemMapRef: systemMapPath(),
       vocabularyStatus: loaded.status,
       approvedTermCount: loaded.terms.length,
       matchedTermCount: matchedTerms.length,
       proposedTermCount: proposedTerms.length,
-      relatedConceptMapCount: relatedConceptMaps.length,
+      relatedSystemDocumentCount: relatedSystemDocuments.length,
       unresolvedRelationCount,
       requiresClarification,
     },
     matchedTerms: matchedTerms.map(({ index: _index, ...item }) => item),
     proposedTerms,
-    relatedConceptMaps,
+    relatedSystemDocuments,
     statements,
     notes,
     questions,

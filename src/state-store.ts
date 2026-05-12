@@ -3,7 +3,7 @@ import path from "node:path";
 import type {
   ClarifyOutput,
   ExecuteOutput,
-  LanguageGrounding,
+  ProjectGrounding,
   RuntimePhase,
   UnitReviewReport,
   VerifyOutput,
@@ -23,10 +23,10 @@ import {
   unitReviewReportPath,
   unitResultPath,
   unitStatusPath,
-  conceptIndexPath,
-  conceptsDirPath,
-  conceptMapPath,
-  projectLanguagePath,
+  systemMapPath,
+  systemDocsPath,
+  systemDocumentPath,
+  glossaryPath,
   templatesDirPath,
   workflowRelayRootPath,
   workflowStatePath,
@@ -94,27 +94,27 @@ function markdownList(items: string[], empty = "(none)"): string[] {
   return items.map((item) => `- ${item}`);
 }
 
-function asLanguageGrounding(value: unknown): LanguageGrounding | undefined {
+function asProjectGrounding(value: unknown): ProjectGrounding | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
   }
-  return value as LanguageGrounding;
+  return value as ProjectGrounding;
 }
 
-function formatLanguageGrounding(value: unknown): string[] {
-  const grounding = asLanguageGrounding(value);
+function formatProjectGrounding(value: unknown): string[] {
+  const grounding = asProjectGrounding(value);
   if (!grounding) {
     return ["- (none)"];
   }
 
   const lines = [
-    `- Language ref: ${grounding.summary.languageRef}`,
-    `- Concept index ref: ${grounding.summary.conceptIndexRef ?? "(missing)"}`,
+    `- Glossary ref: ${grounding.summary.glossaryRef}`,
+    `- System map ref: ${grounding.summary.systemMapRef ?? "(missing)"}`,
     `- Vocabulary status: ${grounding.summary.vocabularyStatus}`,
     `- Requires clarification: ${grounding.summary.requiresClarification ? "yes" : "no"}`,
     `- Matched terms: ${grounding.summary.matchedTermCount}`,
     `- Proposed terms: ${grounding.summary.proposedTermCount}`,
-    `- Related Concept Maps: ${grounding.summary.relatedConceptMapCount ?? grounding.relatedConceptMaps?.length ?? 0}`,
+    `- Related System Documents: ${grounding.summary.relatedSystemDocumentCount ?? grounding.relatedSystemDocuments?.length ?? 0}`,
     `- Unresolved relations: ${grounding.summary.unresolvedRelationCount}`,
     "",
     "### Matched Terms",
@@ -125,11 +125,11 @@ function formatLanguageGrounding(value: unknown): string[] {
     "### Proposed Terms",
     ...markdownList(grounding.proposedTerms.map((term) => `${term.id} = ${term.canonical}`)),
     "",
-    "### Related Concept Maps",
+    "### Related System Documents",
     ...markdownList(
-      (grounding.relatedConceptMaps ?? []).map((conceptMap) => {
-        const anchors = conceptMap.codeAnchors.length > 0 ? ` anchors=${conceptMap.codeAnchors.join(", ")}` : "";
-        return `${conceptMap.key} -> ${conceptMap.ref} [matched: ${conceptMap.matchedText}; fields: ${conceptMap.matchFields.join(", ")}]${anchors}`;
+      (grounding.relatedSystemDocuments ?? []).map((systemDocument) => {
+        const references = systemDocument.references.length > 0 ? ` refs=${systemDocument.references.join(", ")}` : "";
+        return `${systemDocument.key} -> ${systemDocument.ref} [matched: ${systemDocument.matchedText}; fields: ${systemDocument.matchFields.join(", ")}]${references}`;
       }),
     ),
     "",
@@ -141,7 +141,7 @@ function formatLanguageGrounding(value: unknown): string[] {
       ),
     ),
     "",
-    "### Language Questions",
+    "### Grounding Questions",
     ...markdownList(grounding.questions),
   ];
 
@@ -247,8 +247,8 @@ function buildUnitBrief(state: WorkflowState, unit: WorkflowUnit): string {
     "## Request",
     unit.request ?? state.description,
     "",
-    "## Language Grounding",
-    ...formatLanguageGrounding(unit.languageGrounding),
+    "## Project Grounding",
+    ...formatProjectGrounding(unit.projectGrounding),
     "",
     "## Document Context",
     ...formatDocumentRetrieval(unit.documentContext),
@@ -273,20 +273,25 @@ function buildUnitBrief(state: WorkflowState, unit: WorkflowUnit): string {
 }
 
 function buildUnitContext(state: WorkflowState, unit: WorkflowUnit, rootDir = process.cwd()): string {
-  const languagePath = projectLanguagePath();
-  const languageExists = existsSync(absolutePath(languagePath, rootDir));
+  const glossaryRef = glossaryPath();
+  const mapPath = systemMapPath();
+  const docsPath = systemDocsPath();
+  const glossaryExists = existsSync(absolutePath(glossaryRef, rootDir));
+  const mapExists = existsSync(absolutePath(mapPath, rootDir));
+  const docsExist = existsSync(absolutePath(docsPath, rootDir));
   const lines = [
     `# Context for ${unit.id}`,
     "",
-    "## Project Language",
-    `- Ref: ${languagePath}`,
-    `- Status: ${languageExists ? "present" : "missing"}`,
-    "- Use: read this file when wording, domain terms, module names, or local architectural language matter.",
-    "- Rule: treat this as controlled vocabulary plus evidence, not a layer-by-layer translation map.",
-    "- Rule: keep temporary language proposals in this task packet; only promote durable approved terms to the project language file.",
+    "## Glossary And System Model",
+    `- Glossary: ${glossaryRef} (${glossaryExists ? "present" : "missing"})`,
+    `- System map: ${mapPath} (${mapExists ? "present" : "missing"})`,
+    `- System documents: ${docsPath} (${docsExist ? "present" : "missing"})`,
+    "- Use: read these files when wording, domain terms, module names, behavior, or responsibility boundaries matter.",
+    "- Rule: treat Glossary terms as approved vocabulary and System Documents as current software claims with references.",
+    "- Rule: keep temporary language or System Statement proposals in this task packet until the workflow promotes them.",
     "",
     "## Grounding Snapshot",
-    ...formatLanguageGrounding(unit.languageGrounding),
+    ...formatProjectGrounding(unit.projectGrounding),
     "",
     "## Document Context",
     ...formatDocumentRetrieval(unit.documentContext),
@@ -553,16 +558,19 @@ export function loadState(workflowId: string, rootDir = process.cwd()): Workflow
 }
 
 export function listStates(rootDir = process.cwd()): WorkflowState[] {
-  const dir = path.join(absoluteRoot(rootDir), path.dirname(workflowStatePath("placeholder")));
+  const dir = path.join(absoluteRoot(rootDir), ".krow/state/workflows");
   if (!existsSync(dir)) {
     return [];
   }
 
   return readdirSync(dir)
-    .filter((entry) => entry.endsWith(".json"))
+    .filter((entry) => {
+      const statePath = path.join(dir, entry, "state.json");
+      return existsSync(statePath);
+    })
     .map((entry) => {
       try {
-        return hydrateWorkflowState(JSON.parse(readFileSync(path.join(dir, entry), "utf8")) as WorkflowState);
+        return hydrateWorkflowState(JSON.parse(readFileSync(path.join(dir, entry, "state.json"), "utf8")) as WorkflowState);
       } catch {
         return null;
       }
@@ -586,9 +594,9 @@ export {
   unitBatonPath,
   unitRelayPath,
   unitReviewReportPath,
-  projectLanguagePath,
-  conceptIndexPath,
-  conceptsDirPath,
-  conceptMapPath,
+  glossaryPath,
+  systemMapPath,
+  systemDocsPath,
+  systemDocumentPath,
   templatesDirPath,
 };

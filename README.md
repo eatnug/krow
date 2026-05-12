@@ -1,177 +1,182 @@
 # krow
 
-`krow` is a state-machine workflow harness for coding agents.
+`krow` gives a codebase a shared language, describes the software with that language, and makes coding agents work from those documents.
 
-It turns "please work on this repo" into an explicit workflow: classify the request, gather evidence, split bounded units, emit machine-readable run/gate/done signals, and persist state on disk so the work can be resumed or audited.
+## Basic Flow
 
-`krow` is built for people who use Codex, Claude Code, Gemini CLI, or other coding agents as serious development tools and want less improvisation in the loop.
-
-## Why it exists
-
-Most coding-agent failures are orchestration failures, not model failures:
-
-- the agent starts editing before it has evidence
-- scope expands without a named owner
-- clarification happens one question at a time
-- project vocabulary drifts from the codebase
-- state disappears into chat history
-- completion is claimed before verification
-
-`krow` keeps the contract small and visible. Work moves through a local state machine, each phase produces structured output, and the repository's own language becomes part of the workflow.
-
-## Quick Start
+The npm package is `krow-cli`. The installed command is `krow`.
 
 ```bash
+# bootstrap krow in a repo
 npx --yes krow-cli@latest init
+
+# install agent commands too
+npx --yes krow-cli@latest init --agents codex,claude,gemini
 ```
 
-The published package name is `krow-cli`. The installed command remains `krow`.
-
-To refresh an existing install, use:
-
-```bash
-npx --yes krow-cli@latest init --force --global
-```
-
-`init` installs host-facing wrappers and seeds repo-local workflow files, including `.krow/language.md`.
-It also creates the document structure used by the natural-language/code synchronization loop:
-
-- `.krow/concepts/index.md` for Project Concept Map routing
-- `.krow/templates/` for Project Language entries, Concept Maps, PRDs, Implementation Plans, Examples, and Review Reports
-- `.krow/generated/` for rebuildable retrieval evidence
-- `.krow/state/workflows/`, `.krow/tasks/`, and `.krow/relays/` for runtime state and handoff files
-
-Then use the installed work entrypoint from your host:
-
-- Codex: `$work fix the failing release script`
-- Claude Code: `/work fix the failing release script`
-- Gemini CLI: `/work fix the failing release script`
-
-Use the installed check entrypoint when you want to initialize or refresh krow's understanding of an existing codebase:
-
-- Codex: `$check`
-- Claude Code: `/check`
-- Gemini CLI: `/check`
-
-`init` also seeds `.krow/language.md` for project vocabulary and language grounding.
-
-## What it gives you
-
-### Explicit workflow state
-
-Workflow data is persisted under `.krow/`:
+For an existing codebase:
 
 ```text
-.krow/state/workflows/<workflowId>.json
-.krow/tasks/<workflowId>/
-.krow/relays/<workflowId>/
+$check about: React app. Free and paid subscription states control feature access.
 ```
 
-This makes agent work resumable instead of trapped in a single chat session.
+For a new project or a new change:
 
-### Machine-readable signals
+```text
+$work Build the first version of the dashboard.
+$work Free users should see an Upgrade Prompt when Daily Recommendation access is blocked.
+```
 
-The harness emits a small set of runtime signals:
+Agent surfaces:
 
-- `run`: execute one bounded phase for one workflow unit
-- `gate`: stop for bundled external input
-- `done`: terminal completed, blocked, or stopped state
-- `fault`: recoverable or unrecoverable runtime problem
+- Codex: `$check`, `$work <request>`
+- Claude Code: `/check`, `/work <request>`
+- Gemini CLI: `/check`, `/work <request>`
 
-Hosts can wire those signals into their own UI or automation.
+The agent surface is the normal user entrypoint. The CLI is the deterministic runtime underneath it.
 
-### Repository language grounding
+## Files
 
-`krow` treats language as grounding, not mandatory translation. It reads `.krow/language.md`, matches approved vocabulary, marks request-only terms as proposed, and records unresolved gaps.
+```text
+.krow/system/glossary.md
+  agreed project words
 
-When `.krow/concepts/*.md` files exist, intake also matches related Project Concept Maps by concept key, title, alias, hierarchy, related concepts, business use cases, and code anchors. These maps are retrieval guides for likely code and test surfaces; they are not a hand-maintained dependency graph.
+.krow/system/map.md
+  current software map
 
-`$check` runs the same idea outside a work request. It scans the repository as read-only evidence, writes rebuildable evidence and a check report under `.krow/`, proposes Project Language and Concept Map updates, then asks the user before applying approved `.krow` changes. Optional arguments are treated as a service or product description, not as a path. It does not edit source code.
+.krow/system/docs/*.md
+  current behavior, rules, structures, and responsibilities
 
-### Bounded execution
+.krow/work/<work-id>/
+  PRD, Spec, Plan, Task, and Review docs for a change
 
-Broad work is decomposed into named units. Each unit has a task packet, an owner, expected evidence, and a verification path.
+.krow/check/<check-id>/
+  observed evidence, drafts, decisions, and check report
+```
 
-## How it works
+## Project Understanding
 
-`krow` keeps the workflow contract small and opinionated:
+The core project documents live under `.krow/system`.
 
-- run the workflow as an explicit state machine, not as hidden chat convention
-- one worker owns one bounded task
-- use repository language as grounding for the work
-- gather evidence before changing code
-- bundle clarification instead of asking one question at a time
-- persist workflow state, task packets, and handoff files on disk
-- verification is required before claiming completion
+```text
+.krow/system/glossary.md
+  Approved vocabulary. Defines what important project words mean.
 
-Host coverage matters, but it is not the point. The point is to make coding work traceable, resumable, and less dependent on agent improvisation.
+.krow/system/map.md
+  The current high-level System Model and route into System Documents.
 
-The installed wrappers are thin adapters over the same local control surface:
+.krow/system/docs/*.md
+  System Documents. Each document describes a current capability, rule, structure, or responsibility area.
+```
 
-- `route`: resolve explicit chat or work intent without creating workflow state
-- `intake`: extract anchors, missing evidence, clarification questions, and a proposed unit graph
-- `check`: scan repo evidence, write a krow check report, and propose `.krow` language/concept updates without changing source code
-- `check-apply`: apply explicit check decisions to `.krow/language.md` and `.krow/concepts/` only
-- `documents`: scan PRD, plan, example, review, approval, and trace-link metadata
-- `review`: derive a Review Report from workflow documents, Example-test links, implementation links, and verification output
-- `start`: persist workflow state immediately and emit the first `run` or `gate` signal
-- `status`, `next`, `resume`: inspect or continue persisted workflow state
-- `submit-phase`, `submit-decisions`, `stop`: advance or terminate local workflow state
+A System Document is made of System Statements and References.
 
-Runtime signals are intentionally small:
+```text
+System Statement
+  A current fact about the software, written with Glossary terms.
 
-- `run`: execute one bounded phase for one workflow unit
-- `gate`: stop for bundled external input only
-- `done`: terminal completed, blocked, or stopped state
-- `fault`: recoverable or unrecoverable runtime problem
+Reference
+  A typed link from a term, statement, document, Work Doc, or Review to concrete project material.
+```
 
-`start --intent work` is the normal entrypoint. It reuses intake analysis internally, but it creates workflow state up front. If the request still needs clarification, `krow` emits a `gate` with an intent-lock plus a bundled decision set instead of forcing the host to restart the workflow from scratch.
+## Check
 
-Workflow data is persisted under `.krow/`:
+`$check` initializes or refreshes krow's understanding of a codebase.
 
-- `.krow/state/workflows/<workflowId>.json`
-- `.krow/tasks/<workflowId>/`
-- `.krow/relays/<workflowId>/`
+Example:
 
-Product intent documents can live alongside that runtime state:
+```text
+$check about: React app. Free and paid subscription states control feature access.
+```
 
-- `.krow/language.md`
-- `.krow/concepts/`
-- `.krow/prds/`
-- `.krow/plans/`
-- `.krow/examples/`
-- `.krow/reviews/`
+The `about` text is a seed. It guides scope and wording, but it is not treated as project truth. `$check` still grounds drafts in repository evidence.
+
+`$check` reads the repository, finds entrypoints and runtime flows, drafts System Documents and System Statements, and asks for approval before writing durable project understanding.
+
+Check output:
+
+```text
+.krow/check/<check-id>/observed.json
+.krow/check/<check-id>/draft.json
+.krow/check/<check-id>/decisions.json
+.krow/check/<check-id>/result.md
+```
+
+Approval applies selected drafts into:
+
+```text
+.krow/system/glossary.md
+.krow/system/map.md
+.krow/system/docs/*.md
+```
+
+Direct CLI equivalent:
+
+```bash
+krow check --about "React app. Free and paid subscription states control feature access."
+krow check-apply <check-id> <answers.json>
+```
+
+## Work
+
+`$work <request>` starts a change using the current Glossary and System Model.
+
+Example:
+
+```text
+$work Free users should see an Upgrade Prompt when Daily Recommendation access is blocked.
+```
+
+Work Docs are stored under:
+
+```text
+.krow/work/<work-id>/
+  index.md
+  prd.md
+  spec.md
+  plan.md
+  tasks/
+  review.md
+```
+
+The intended loop is:
+
+```text
+Glossary + System Model
+  -> Work Docs
+  -> Tasks update Code / Tests
+  -> Review
+  -> proposed Glossary/System Model updates when meaning changed
+```
+
+## Runtime
+
+krow uses a deterministic runner with machine-readable signals:
+
+- `run`: execute the current autonomous unit
+- `gate`: user or lead input is required
+- `done`: workflow reached a terminal state
+- `fault`: runtime state or submitted payload is invalid
+
+Agents do not choose the global workflow order. The runner emits the current step, the agent performs that step, and the runner validates submitted output before state advances.
 
 ## Commands
 
 ```bash
-krow route --intent work "fix the release script"
-krow intake --intent work "fix the release script"
-krow check --about "This service manages free and paid recommendation access."
-krow check-apply <checkId> -
-krow documents "fix the release script"
-krow review <workflowId>
-krow start --intent work "fix the release script"
-krow status <workflowId>
-krow next <workflowId>
-krow resume <workflowId>
-krow submit-phase <workflowId> <phase> <payload>
-krow submit-decisions <workflowId> <payload>
-krow stop <workflowId>
+krow init [--agents <all|none|codex|claude|gemini>] [--root <dir>] [--force]
+krow check [description] [--about <text>] [--scope <path>] [--root <dir>]
+krow check-apply <checkId> <json|path|-> [--root <dir>]
+krow work <request> [--root <dir>] [--work-id <id>]
+krow documents [message] [--root <dir>]
+krow review <workflowId> [unitId] [--root <dir>]
+krow start <message> [--intent <work|chat>] [--root <dir>]
+krow status <workflowId> [--root <dir>]
+krow next <workflowId> [--root <dir>]
+krow resume <workflowId> [--root <dir>]
+krow submit-phase <workflowId> <phase> <json|path|-> [--root <dir>]
+krow submit-decisions <workflowId> <json|path|-> [--root <dir>]
+krow stop <workflowId> [reason] [--root <dir>]
 ```
-
-## Repository Layout
-
-- `AGENTS.md`: always-loaded execution contract
-- `docs/FOUNDATIONS.md`: design rationale
-- `docs/HARNESS.md`: full system blueprint
-- `docs/HOST-INTEGRATION.md`: host integration notes
-- `docs/SIGNALS.md`: runtime signal contract
-- `docs/STATE.md`: persisted state model
-- `docs/TRANSITIONS.md`: state transition notes
-- `src/orchestrator.ts`: runtime state machine, signal builder, and phase guidance
-- `src/validators.ts`: runtime payload and state validators
-- `install/`: host wrapper installer
 
 ## Development
 
@@ -179,15 +184,12 @@ krow stop <workflowId>
 npm install
 npm run typecheck
 npm run build
+npm run smoke:v2
 ```
 
 `prepublishOnly` runs `npm run build`.
 
 ## Publishing
-
-The npm package is published as `krow-cli`.
-
-Typical release flow:
 
 ```bash
 npm version <patch|minor|major>

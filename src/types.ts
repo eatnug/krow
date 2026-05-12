@@ -33,7 +33,7 @@ export interface DecisionPrompt {
   context?: string;
   kind?: "clarify" | "approval";
   target?: {
-    kind: "prd" | "plan" | "language" | "scope";
+    kind: "prd" | "plan" | "glossary" | "system-document" | "scope";
     ref: string;
     status?: string;
   };
@@ -355,25 +355,25 @@ export interface RequestAnchors {
   tickets: string[];
 }
 
-export type LanguageNamespace = "core" | "tech" | "project";
+export type GlossaryNamespace = "core" | "tech" | "project";
 
-export type LanguageTermStatus = "approved" | "proposed" | "unresolved" | "deprecated";
+export type GlossaryTermStatus = "approved" | "proposed" | "unresolved" | "deprecated";
 
-export interface LanguageTerm {
+export interface GlossaryTerm {
   id: string;
-  namespace: LanguageNamespace;
+  namespace: GlossaryNamespace;
   canonical: string;
   aliases: string[];
-  status: LanguageTermStatus;
-  source: "builtin" | "language_file" | "request";
+  status: GlossaryTermStatus;
+  source: "builtin" | "glossary_file" | "request";
   evidence?: string[];
 }
 
-export interface LanguageTermMatch extends LanguageTerm {
+export interface GlossaryTermMatch extends GlossaryTerm {
   matchedText: string;
 }
 
-export interface LanguageStatement {
+export interface GroundingStatement {
   subject: string;
   relation: string;
   object: string;
@@ -382,38 +382,38 @@ export interface LanguageStatement {
   sourceText: string;
 }
 
-export interface ProjectConceptMapMatch {
+export interface SystemDocumentMatch {
   key: string;
   title: string;
   ref: string;
   kind?: string;
   layer?: "product" | "system" | string;
-  status?: LanguageTermStatus;
+  status?: GlossaryTermStatus;
   aliases: string[];
-  relatedConcepts: string[];
-  codeAnchors: string[];
+  relatedTerms: string[];
+  references: string[];
   matchedText: string;
   matchFields: string[];
 }
 
-export interface LanguageGroundingSummary {
-  languageRef: string;
-  conceptIndexRef: string;
+export interface ProjectGroundingSummary {
+  glossaryRef: string;
+  systemMapRef: string;
   vocabularyStatus: "missing" | "seed" | "custom";
   approvedTermCount: number;
   matchedTermCount: number;
   proposedTermCount: number;
-  relatedConceptMapCount: number;
+  relatedSystemDocumentCount: number;
   unresolvedRelationCount: number;
   requiresClarification: boolean;
 }
 
-export interface LanguageGrounding {
-  summary: LanguageGroundingSummary;
-  matchedTerms: LanguageTermMatch[];
-  proposedTerms: LanguageTerm[];
-  relatedConceptMaps: ProjectConceptMapMatch[];
-  statements: LanguageStatement[];
+export interface ProjectGrounding {
+  summary: ProjectGroundingSummary;
+  matchedTerms: GlossaryTermMatch[];
+  proposedTerms: GlossaryTerm[];
+  relatedSystemDocuments: SystemDocumentMatch[];
+  statements: GroundingStatement[];
   notes: string[];
   questions: string[];
 }
@@ -427,7 +427,7 @@ export interface IntakeIntentLock {
 export interface IntakePlan {
   objective: string;
   anchors: RequestAnchors;
-  languageGrounding?: LanguageGrounding;
+  projectGrounding?: ProjectGrounding;
   intentLock?: IntakeIntentLock;
   intents: CapabilityIntent[];
   proposedUnits: WorkflowUnit[];
@@ -499,6 +499,7 @@ export type LocalControlCommandName =
   | "intake"
   | "check"
   | "check-apply"
+  | "work"
   | "documents"
   | "review"
   | "start"

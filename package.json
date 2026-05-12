@@ -1,19 +1,21 @@
 {
   "name": "krow-cli",
-  "version": "0.3.2",
-  "description": "A host-agnostic agent harness for coding work",
+  "version": "0.3.3",
+  "description": "A document-driven workflow for coding agents",
   "type": "module",
   "bin": {
     "krow": "dist/cli.js"
   },
   "files": [
     "dist",
-    "install"
+    "install",
+    "templates"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsup src/cli.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit",
+    "smoke:v2": "node scripts/smoke-v2.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

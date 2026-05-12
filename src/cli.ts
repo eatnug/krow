@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -19,10 +19,12 @@ import {
   unitRelayPath,
   unitResultPath,
   unitStatusPath,
+  systemDocsPath,
+  glossaryPath,
   workflowTaskIndexPath,
   workflowTaskRootPath,
 } from "./state-store.js";
-import { groundRequestLanguage } from "./language-grounding.js";
+import { groundRequestProjectContext } from "./project-grounding.js";
 import type {
   CapabilityIntent,
   CapabilityKind,
@@ -31,8 +33,8 @@ import type {
   DecisionPrompt,
   IntakePlan,
   IntakeIntentLock,
-  LanguageGrounding,
-  LanguageNamespace,
+  ProjectGrounding,
+  GlossaryNamespace,
   LocalControlCommandName,
   RequestAnchors,
   RouteDecision,
@@ -57,6 +59,7 @@ import {
 import { executionContractFromRetrieval } from "./execution-contracts.js";
 import { writeUnitReviewReport } from "./review-report.js";
 import { applyProjectCheckDecisions, runProjectCheck } from "./project-check.js";
+import { createWorkDocuments } from "./templates.js";
 
 type FlagMap = Record<string, string | boolean>;
 
@@ -75,6 +78,15 @@ type LocalControlCommandOutput = {
   localOnly: true;
   description: string;
   capabilityPolicy: CapabilityPolicy;
+};
+
+type ProjectUnderstandingStatus = {
+  ready: boolean;
+  glossaryRef: string;
+  systemDocsRef: string;
+  approvedGlossaryTermCount: number;
+  approvedSystemDocumentCount: number;
+  missing: string[];
 };
 
 const pathLikePattern = /(?:^|[\s(`])((?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+)/gi;
@@ -134,8 +146,9 @@ const proseSymbolStopWords = new Set([
 const localControlDescriptions: Record<LocalControlCommandName, string> = {
   route: "Resolve explicit chat or work intent without creating workflow state.",
   intake: "Produce an intake plan and missing-context analysis without creating workflow state.",
-  check: "Scan repo evidence, write a krow check report, and propose approved-language updates without changing source code.",
-  "check-apply": "Apply explicit krow check decisions to .krow language and concept documents only.",
+  check: "Scan repo evidence, write a krow check report, and draft Glossary/System Model updates without changing source code.",
+  "check-apply": "Apply explicit krow check decisions to .krow Glossary and System Documents only.",
+  work: "Create a v2 Work Doc folder from a request, create workflow state, and emit the first signal.",
   documents: "Scan krow Markdown documents, approval sections, and derived trace ids.",
   review: "Derive a Review Report from workflow documents, execution traces, and verification output.",
   start: "Create workflow state from a message and emit the first control signal.",
@@ -167,6 +180,7 @@ function printUsage(): void {
       "  intake <message> [--intent <work|chat>]",
       "  check [description] [--about <text>] [--scope <path>] [--root <dir>]",
       "  check-apply <checkId> <json|path|-> [--root <dir>]",
+      "  work <request> [--root <dir>] [--work-id <id>]",
       "  documents [message] [--root <dir>]",
       "  review <workflowId> [unitId] [--root <dir>]",
       "  start <message> [--intent <work|chat>] [--capture] [--mode <name>] [--root <dir>]",
@@ -253,6 +267,55 @@ function readDecisionAnswersInput(value: string): DecisionAnswer[] {
 
 function rootDir(flags: FlagMap): string {
   return typeof flags.root === "string" ? flags.root : process.cwd();
+}
+
+function approvedGlossaryTermCount(content: string): number {
+  return content
+    .split(/^##\s+/m)
+    .slice(1)
+    .filter((section) => /^ID:\s*TERM:[^\s]+\s*$/m.test(section) && /^Status:\s*Approved\s*$/im.test(section))
+    .length;
+}
+
+function approvedSystemDocumentCount(rootDir: string, docsRef: string): number {
+  const docsDir = path.join(rootDir, docsRef);
+  if (!existsSync(docsDir)) {
+    return 0;
+  }
+
+  return readdirSync(docsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .filter((entry) => {
+      const content = readFileSync(path.join(docsDir, entry.name), "utf8");
+      return /^ID:\s*DOC:[^\s]+\s*$/m.test(content) && /^Status:\s*Approved\s*$/im.test(content);
+    })
+    .length;
+}
+
+function projectUnderstandingStatus(rootDir: string): ProjectUnderstandingStatus {
+  const glossaryRef = glossaryPath();
+  const systemDocsRef = systemDocsPath();
+  const glossaryFilePath = path.join(rootDir, glossaryRef);
+  const glossaryContent = existsSync(glossaryFilePath) ? readFileSync(glossaryFilePath, "utf8") : "";
+  const approvedTerms = approvedGlossaryTermCount(glossaryContent);
+  const approvedDocs = approvedSystemDocumentCount(rootDir, systemDocsRef);
+  const missing: string[] = [];
+
+  if (approvedTerms === 0) {
+    missing.push("approved Glossary terms");
+  }
+  if (approvedDocs === 0) {
+    missing.push("approved System Documents");
+  }
+
+  return {
+    ready: missing.length === 0,
+    glossaryRef,
+    systemDocsRef,
+    approvedGlossaryTermCount: approvedTerms,
+    approvedSystemDocumentCount: approvedDocs,
+    missing,
+  };
 }
 
 function requireMessage(args: string[], commandName: string): string {
@@ -409,7 +472,7 @@ function hasVerificationSurface(anchors: RequestAnchors): boolean {
   return anchors.tests.length > 0 || anchors.verificationSurfaces.length > 0;
 }
 
-function codeAnchorTarget(anchor: string): string {
+function referenceTarget(anchor: string): string {
   const code = anchor.match(/`([^`]+)`/)?.[1];
   if (code) {
     return code.trim();
@@ -419,7 +482,7 @@ function codeAnchorTarget(anchor: string): string {
   return (afterLabel ?? anchor).trim();
 }
 
-function normalizeConceptToken(value: string): string {
+function normalizeSystemDocumentToken(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9가-힣]+/g, " ")
@@ -427,65 +490,65 @@ function normalizeConceptToken(value: string): string {
     .trim();
 }
 
-function conceptSearchTexts(languageGrounding: LanguageGrounding): string[] {
+function systemDocumentSearchTexts(projectGrounding: ProjectGrounding): string[] {
   return unique(
-    languageGrounding.relatedConceptMaps.flatMap((conceptMap) => [
-      conceptMap.key,
-      conceptMap.title,
-      ...conceptMap.aliases,
-      ...conceptMap.relatedConcepts,
+    projectGrounding.relatedSystemDocuments.flatMap((systemDocument) => [
+      systemDocument.key,
+      systemDocument.title,
+      ...systemDocument.aliases,
+      ...systemDocument.relatedTerms,
     ]),
   );
 }
 
-function symbolIsConceptToken(symbol: string, languageGrounding: LanguageGrounding): boolean {
-  const normalizedSymbol = normalizeConceptToken(symbol);
+function symbolIsSystemDocumentToken(symbol: string, projectGrounding: ProjectGrounding): boolean {
+  const normalizedSymbol = normalizeSystemDocumentToken(symbol);
   if (!normalizedSymbol) {
     return false;
   }
 
-  return conceptSearchTexts(languageGrounding)
-    .map(normalizeConceptToken)
+  return systemDocumentSearchTexts(projectGrounding)
+    .map(normalizeSystemDocumentToken)
     .some((text) => text.split(" ").includes(normalizedSymbol));
 }
 
-function enrichAnchorsWithConceptMaps(anchors: RequestAnchors, languageGrounding: LanguageGrounding): RequestAnchors {
-  const conceptTargets = unique(
-    languageGrounding.relatedConceptMaps.flatMap((conceptMap) => conceptMap.codeAnchors.map(codeAnchorTarget)),
+function enrichAnchorsWithSystemDocuments(anchors: RequestAnchors, projectGrounding: ProjectGrounding): RequestAnchors {
+  const referenceTargets = unique(
+    projectGrounding.relatedSystemDocuments.flatMap((systemDocument) => systemDocument.references.map(referenceTarget)),
   );
-  if (conceptTargets.length === 0) {
+  if (referenceTargets.length === 0) {
     return {
       ...anchors,
-      symbols: anchors.symbols.filter((symbol) => !symbolIsConceptToken(symbol, languageGrounding)),
+      symbols: anchors.symbols.filter((symbol) => !symbolIsSystemDocumentToken(symbol, projectGrounding)),
     };
   }
 
   return {
     ...anchors,
-    filePaths: unique([...anchors.filePaths, ...conceptTargets]),
-    symbols: anchors.symbols.filter((symbol) => !symbolIsConceptToken(symbol, languageGrounding)),
-    tests: unique([...anchors.tests, ...conceptTargets.filter((target) => /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(target))]),
+    filePaths: unique([...anchors.filePaths, ...referenceTargets]),
+    symbols: anchors.symbols.filter((symbol) => !symbolIsSystemDocumentToken(symbol, projectGrounding)),
+    tests: unique([...anchors.tests, ...referenceTargets.filter((target) => /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(target))]),
     verificationSurfaces: unique([
       ...anchors.verificationSurfaces,
-      ...conceptTargets.filter((target) => /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(target)),
+      ...referenceTargets.filter((target) => /(?:test|spec)\.[A-Za-z0-9_.-]+$/i.test(target)),
     ]),
   };
 }
 
-function documentConceptKeys(languageGrounding: LanguageGrounding | undefined): string[] {
-  if (!languageGrounding) {
+function documentTermIds(projectGrounding: ProjectGrounding | undefined): string[] {
+  if (!projectGrounding) {
     return [];
   }
   return unique([
-    ...languageGrounding.relatedConceptMaps.flatMap((conceptMap) => [
-      conceptMap.key,
-      ...conceptMap.relatedConcepts,
-      ...conceptMap.aliases,
+    ...projectGrounding.relatedSystemDocuments.flatMap((systemDocument) => [
+      systemDocument.key,
+      ...systemDocument.relatedTerms,
+      ...systemDocument.aliases,
     ]),
-    ...languageGrounding.matchedTerms
+    ...projectGrounding.matchedTerms
       .filter((term) => term.namespace === "project")
       .flatMap((term) => [term.id, term.canonical, ...term.aliases]),
-    ...languageGrounding.proposedTerms.map((term) => term.canonical),
+    ...projectGrounding.proposedTerms.map((term) => term.canonical),
   ]);
 }
 
@@ -646,7 +709,7 @@ function buildSingleUnit(
   anchors: RequestAnchors,
   intents: CapabilityIntent[],
   notes: string[],
-  languageGrounding?: LanguageGrounding,
+  projectGrounding?: ProjectGrounding,
 ): WorkflowUnit {
   const scopedPaths = unique(anchors.filePaths.map(scopeKeyForFilePath));
   return enrichUnit({
@@ -661,7 +724,7 @@ function buildSingleUnit(
     anchors,
     intakeIntents: intents,
     intakeNotes: notes,
-    languageGrounding,
+    projectGrounding,
   }, objective, anchors, "single");
 }
 
@@ -670,7 +733,7 @@ function buildIntegrationUnit(
   index: number,
   priorUnits: WorkflowUnit[],
   graphNotes: string[],
-  languageGrounding?: LanguageGrounding,
+  projectGrounding?: ProjectGrounding,
 ): WorkflowUnit {
   return enrichUnit({
     id: makeUnitId(index),
@@ -682,7 +745,7 @@ function buildIntegrationUnit(
     parallelizable: false,
     ownership: unique(priorUnits.flatMap((unit) => unit.ownership ?? [])),
     intakeNotes: graphNotes,
-    languageGrounding,
+    projectGrounding,
     verifyFocus: [
       "Cross-unit interfaces still align after all ready units complete.",
       "The final user-facing result matches the original objective, not just each isolated slice.",
@@ -703,7 +766,7 @@ function carveWorkflowUnits(
   anchors: RequestAnchors,
   intents: CapabilityIntent[],
   notes: string[],
-  languageGrounding?: LanguageGrounding,
+  projectGrounding?: ProjectGrounding,
 ): { proposedUnits: WorkflowUnit[]; graphStrategy: WorkflowGraphStrategy; graphNotes: string[] } {
   const deliverables = explicitDeliverables(route.normalizedMessage);
   if (deliverables) {
@@ -727,12 +790,12 @@ function carveWorkflowUnits(
         anchors: itemAnchors,
         intakeIntents: intents,
         intakeNotes: [...notes, ...graphNotes],
-        languageGrounding,
+        projectGrounding,
       } satisfies WorkflowUnit, item, itemAnchors, deliverables.ordered ? "serial" : "parallel_fanout");
     });
 
     const proposedUnits = !deliverables.ordered
-      ? [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes, languageGrounding)]
+      ? [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes, projectGrounding)]
       : units;
 
     return {
@@ -772,7 +835,7 @@ function carveWorkflowUnits(
           },
           intakeIntents: intents,
           intakeNotes: [...notes, ...graphNotes],
-          languageGrounding,
+          projectGrounding,
         },
         objective,
         {
@@ -785,14 +848,14 @@ function carveWorkflowUnits(
     );
 
     return {
-      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes, languageGrounding)],
+      proposedUnits: [...units, buildIntegrationUnit(objective, units.length + 1, units, graphNotes, projectGrounding)],
       graphStrategy: "parallel_fanout",
       graphNotes,
     };
   }
 
   return {
-    proposedUnits: [buildSingleUnit(route, objective, anchors, intents, notes, languageGrounding)],
+    proposedUnits: [buildSingleUnit(route, objective, anchors, intents, notes, projectGrounding)],
     graphStrategy: "single",
     graphNotes: ["request stayed as one bounded workflow unit"],
   };
@@ -801,13 +864,13 @@ function carveWorkflowUnits(
 function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakePlan {
   const objective = summarizeObjective(route.normalizedMessage);
   let anchors = extractAnchors(route.normalizedMessage);
-  const languageGrounding = route.kind === "work" ? groundRequestLanguage(route.normalizedMessage, rootDir) : undefined;
-  if (languageGrounding) {
-    anchors = enrichAnchorsWithConceptMaps(anchors, languageGrounding);
+  const projectGrounding = route.kind === "work" ? groundRequestProjectContext(route.normalizedMessage, rootDir) : undefined;
+  if (projectGrounding) {
+    anchors = enrichAnchorsWithSystemDocuments(anchors, projectGrounding);
   }
   const documentRetrieval: DocumentRetrieval | undefined =
     route.kind === "work"
-      ? findRelatedDocuments(scanKrowDocuments(rootDir), objective, documentConceptKeys(languageGrounding))
+      ? findRelatedDocuments(scanKrowDocuments(rootDir), objective, documentTermIds(projectGrounding))
       : undefined;
   const intents: CapabilityIntent[] = [];
   const notes: string[] = [];
@@ -830,20 +893,20 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
     };
   }
 
-  if (languageGrounding) {
-    notes.push(...languageGrounding.notes);
+  if (projectGrounding) {
+    notes.push(...projectGrounding.notes);
     maybeAdd(intents, {
       kind: "inspect_docs",
       priority: "high",
       reason: "ground the request in the approved project language before implementation",
       targets: unique([
-        languageGrounding.summary.languageRef,
-        languageGrounding.summary.conceptIndexRef,
-        ...languageGrounding.relatedConceptMaps.map((conceptMap) => conceptMap.ref),
+        projectGrounding.summary.glossaryRef,
+        projectGrounding.summary.systemMapRef,
+        ...projectGrounding.relatedSystemDocuments.map((systemDocument) => systemDocument.ref),
       ]),
     });
 
-    if (languageGrounding.summary.requiresClarification) {
+    if (projectGrounding.summary.requiresClarification) {
       notes.push(
         "resolve proposed or unresolved vocabulary during clarify from repository evidence; ask the user only when repository evidence conflicts or product behavior remains ambiguous",
       );
@@ -919,7 +982,7 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
   }
 
   const baseQuestions = unique(questions);
-  const carved = carveWorkflowUnits(route, objective, anchors, intents, notes, languageGrounding);
+  const carved = carveWorkflowUnits(route, objective, anchors, intents, notes, projectGrounding);
   const proposedUnits = documentRetrieval
     ? carved.proposedUnits.map((unit) => ({
         ...unit,
@@ -934,7 +997,7 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
         proposedUnits,
         carved.graphStrategy,
         unique(missingEvidence),
-        languageGrounding,
+        projectGrounding,
       )
     : undefined;
   const bundledQuestions = intentLock
@@ -944,7 +1007,7 @@ function buildIntakePlan(route: RouteDecision, rootDir = process.cwd()): IntakeP
   return {
     objective,
     anchors,
-    languageGrounding,
+    projectGrounding,
     intentLock,
     intents,
     proposedUnits,
@@ -1084,7 +1147,7 @@ function resolveControlPolicy(commandName: LocalControlCommandName): CapabilityP
         ["repo_scan", "search_code", "inspect_docs", "read_state", "write_state", "emit_gate"],
         [
           "local control command only",
-          "writes generated evidence, check report, and proposed krow files under .krow only",
+          "writes observed evidence, draft decisions, and check report under .krow only",
           "does not edit source code",
         ],
       );
@@ -1093,7 +1156,14 @@ function resolveControlPolicy(commandName: LocalControlCommandName): CapabilityP
         "control:check-apply",
         "control",
         ["inspect_docs", "read_state", "write_state"],
-        ["local control command only", "applies explicit check decisions to .krow language and concept documents only"],
+        ["local control command only", "applies explicit check decisions to .krow Glossary and System Documents only"],
+      );
+    case "work":
+      return createPolicy(
+        "control:work",
+        "control",
+        ["inspect_docs", "read_state", "write_state", "emit_gate"],
+        ["local control command only", "creates Work Docs under .krow/work and workflow state under .krow/state/workflows"],
       );
     case "review":
       return createPolicy(
@@ -1192,31 +1262,31 @@ function summarizePlannedSurfaces(anchors: RequestAnchors, units: WorkflowUnit[]
 }
 
 function summarizeNamespaceTerms(
-  languageGrounding: LanguageGrounding | undefined,
-  namespace: LanguageNamespace,
+  projectGrounding: ProjectGrounding | undefined,
+  namespace: GlossaryNamespace,
 ): string[] {
-  if (!languageGrounding) {
+  if (!projectGrounding) {
     return [];
   }
 
   return unique(
-    languageGrounding.matchedTerms
+    projectGrounding.matchedTerms
       .filter((term) => term.namespace === namespace)
       .map((term) => term.canonical),
   ).slice(0, 6);
 }
 
-function summarizeProposedTerms(languageGrounding: LanguageGrounding | undefined): string[] {
-  if (!languageGrounding) {
+function summarizeProposedTerms(projectGrounding: ProjectGrounding | undefined): string[] {
+  if (!projectGrounding) {
     return [];
   }
 
   const matchedPhrases = unique(
-    languageGrounding.matchedTerms.flatMap((term) => [term.canonical, ...term.aliases]).map((term) => term.toLowerCase()),
+    projectGrounding.matchedTerms.flatMap((term) => [term.canonical, ...term.aliases]).map((term) => term.toLowerCase()),
   );
 
   return unique(
-    languageGrounding.proposedTerms
+    projectGrounding.proposedTerms
       .map((term) => term.canonical)
       .filter((term) => {
         const tokens = term.split(/\s+/).filter(Boolean);
@@ -1249,15 +1319,15 @@ function buildIntentLock(
   units: WorkflowUnit[],
   graphStrategy: WorkflowGraphStrategy,
   missingEvidence: string[],
-  languageGrounding?: LanguageGrounding,
+  projectGrounding?: ProjectGrounding,
 ): IntakeIntentLock {
   const surfaces = summarizePlannedSurfaces(anchors, units);
   const verifySurface = unique([...anchors.tests, ...anchors.verificationSurfaces]).slice(0, 3);
-  const coreTerms = summarizeNamespaceTerms(languageGrounding, "core");
-  const techTerms = summarizeNamespaceTerms(languageGrounding, "tech");
-  const projectTerms = summarizeNamespaceTerms(languageGrounding, "project");
-  const conceptMaps = (languageGrounding?.relatedConceptMaps ?? []).map((conceptMap) => conceptMap.key).slice(0, 6);
-  const unresolvedTerms = summarizeProposedTerms(languageGrounding);
+  const coreTerms = summarizeNamespaceTerms(projectGrounding, "core");
+  const techTerms = summarizeNamespaceTerms(projectGrounding, "tech");
+  const projectTerms = summarizeNamespaceTerms(projectGrounding, "project");
+  const systemDocuments = (projectGrounding?.relatedSystemDocuments ?? []).map((systemDocument) => systemDocument.key).slice(0, 6);
+  const unresolvedTerms = summarizeProposedTerms(projectGrounding);
   const lines = [
     `Objective: ${objective}`,
     `Workflow shape: ${describeGraphStrategy(graphStrategy, units)}`,
@@ -1286,8 +1356,8 @@ function buildIntentLock(
     lines.push(`Grounded project terms: ${projectTerms.join(", ")}`);
   }
 
-  if (conceptMaps.length > 0) {
-    lines.push(`Related Project Concept Maps: ${conceptMaps.join(", ")}`);
+  if (systemDocuments.length > 0) {
+    lines.push(`Related System Documents: ${systemDocuments.join(", ")}`);
   }
 
   if (unresolvedTerms.length > 0) {
@@ -1494,7 +1564,7 @@ function visibleDocumentSummary(document: KrowDocumentSummary) {
     ref: document.ref,
     title: document.title,
     approval: document.approval,
-    concepts: document.concepts,
+    terms: document.terms,
     traceLinks: document.traceLinks,
   };
 }
@@ -1543,17 +1613,20 @@ function handleCheckApply(args: string[], flags: FlagMap): void {
 function handleDocuments(args: string[], flags: FlagMap): void {
   const message = args.join(" ").trim();
   const documents = scanKrowDocuments(rootDir(flags));
-  const languageGrounding = message ? groundRequestLanguage(message, rootDir(flags)) : undefined;
+  const projectGrounding = message ? groundRequestProjectContext(message, rootDir(flags)) : undefined;
   const retrieval = message
-    ? findRelatedDocuments(documents, message, documentConceptKeys(languageGrounding))
+    ? findRelatedDocuments(documents, message, documentTermIds(projectGrounding))
     : undefined;
 
   outputJSON({
     control: getLocalControlCommand("documents"),
     documents: {
+      glossary: documents.glossary.map(visibleDocumentSummary),
+      systemDocuments: documents.systemDocuments.map(visibleDocumentSummary),
       prds: documents.prds.map(visibleDocumentSummary),
+      specs: documents.specs.map(visibleDocumentSummary),
       plans: documents.plans.map(visibleDocumentSummary),
-      examples: documents.examples.map(visibleDocumentSummary),
+      tasks: documents.tasks.map(visibleDocumentSummary),
       reviews: documents.reviews.map(visibleDocumentSummary),
       totalCount: documents.all.length,
     },
@@ -1564,6 +1637,50 @@ function handleDocuments(args: string[], flags: FlagMap): void {
       : documents.all
           .filter((document) => (document.kind === "prd" || document.kind === "plan") && document.approval.status !== "approved")
           .map(visibleDocumentSummary),
+  });
+}
+
+function handleWork(args: string[], flags: FlagMap): void {
+  const message = requireMessage(args, "work");
+  const understanding = projectUnderstandingStatus(rootDir(flags));
+  const docs = createWorkDocuments({
+    request: message,
+    rootDir: rootDir(flags),
+    workId: typeof flags["work-id"] === "string" ? flags["work-id"] : undefined,
+  });
+  const result = startFromMessage({
+    message,
+    explicitIntent: "work",
+    rootDir: rootDir(flags),
+    createStateForQuestions: true,
+  });
+
+  if (!result.state) {
+    outputJSON({
+      control: getLocalControlCommand("work"),
+      workDocs: docs,
+      projectUnderstanding: understanding,
+      route: result.route,
+      intake: result.intake,
+      entryPolicy: result.entryPolicy,
+      blockedByQuestions: result.blockedByQuestions,
+    });
+    return;
+  }
+
+  const savedPath = saveWorkflowState(result.state, rootDir(flags));
+  outputJSON({
+    control: getLocalControlCommand("work"),
+    workDocs: docs,
+    projectUnderstanding: understanding,
+    route: result.route,
+    intake: result.intake,
+    entryPolicy: result.entryPolicy,
+    phasePolicy: result.phasePolicy,
+    statePath: savedPath,
+    workflowTaskIndexRef: workflowTaskIndexPath(result.state.workflowId),
+    taskRoot: workflowTaskRootPath(result.state.workflowId),
+    signal: result.signal,
   });
 }
 
@@ -1736,6 +1853,9 @@ function main(): void {
       return;
     case "check-apply":
       handleCheckApply(positionals, flags);
+      return;
+    case "work":
+      handleWork(positionals, flags);
       return;
     case "documents":
       handleDocuments(positionals, flags);

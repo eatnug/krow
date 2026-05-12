@@ -1,44 +1,63 @@
 import path from "node:path";
 
 export const STATE_DIR = ".krow/state/workflows";
-export const TASKS_DIR = ".krow/tasks";
-export const RELAYS_DIR = ".krow/relays";
-export const PROJECT_LANGUAGE_FILE = ".krow/language.md";
-export const CONCEPTS_DIR = ".krow/concepts";
-export const CONCEPT_INDEX_FILE = ".krow/concepts/index.md";
-export const TEMPLATES_DIR = ".krow/templates";
-export const PRDS_DIR = ".krow/prds";
-export const PLANS_DIR = ".krow/plans";
-export const EXAMPLES_DIR = ".krow/examples";
-export const REVIEWS_DIR = ".krow/reviews";
-export const GENERATED_DIR = ".krow/generated";
-export const CHECKS_DIR = ".krow/checks";
-export const ARTIFACTS_DIR = ".krow/artifacts";
+export const SYSTEM_DIR = ".krow/system";
+export const SYSTEM_DOCS_DIR = ".krow/system/docs";
+export const WORK_DIR = ".krow/work";
+export const GLOSSARY_FILE = ".krow/system/glossary.md";
+export const SYSTEM_MAP_FILE = ".krow/system/map.md";
+export const TEMPLATES_DIR = "templates";
+export const GENERATED_DIR = ".krow/state/generated";
+export const CHECKS_DIR = ".krow/check";
+export const ARTIFACTS_DIR = ".krow/state/artifacts";
 export const LOGS_DIR = ".krow/logs";
-export const KNOWLEDGE_DIR = ".krow/knowledge";
 
 export function absoluteRoot(rootDir = process.cwd()): string {
   return path.resolve(rootDir);
 }
 
 export function workflowStatePath(workflowId: string): string {
-  return `${STATE_DIR}/${workflowId}.json`;
+  return `${workflowRunDirPath(workflowId)}/state.json`;
 }
 
-export function projectLanguagePath(): string {
-  return PROJECT_LANGUAGE_FILE;
+export function workflowRunDirPath(workflowId: string): string {
+  return `${STATE_DIR}/${workflowId}`;
 }
 
-export function conceptIndexPath(): string {
-  return CONCEPT_INDEX_FILE;
+export function workflowStepsDirPath(workflowId: string): string {
+  return `${workflowRunDirPath(workflowId)}/steps`;
 }
 
-export function conceptsDirPath(): string {
-  return CONCEPTS_DIR;
+export function workflowArtifactsDirPath(workflowId: string): string {
+  return `${workflowRunDirPath(workflowId)}/artifacts`;
 }
 
-export function conceptMapPath(conceptKey: string): string {
-  return `${CONCEPTS_DIR}/${conceptKey}.md`;
+export function systemDirPath(): string {
+  return SYSTEM_DIR;
+}
+
+export function systemDocsDirPath(): string {
+  return SYSTEM_DOCS_DIR;
+}
+
+export function workDirPath(): string {
+  return WORK_DIR;
+}
+
+export function glossaryPath(): string {
+  return GLOSSARY_FILE;
+}
+
+export function systemMapPath(): string {
+  return SYSTEM_MAP_FILE;
+}
+
+export function systemDocsPath(): string {
+  return SYSTEM_DOCS_DIR;
+}
+
+export function systemDocumentPath(documentKey: string): string {
+  return `${SYSTEM_DOCS_DIR}/${documentKey}.md`;
 }
 
 export function templatesDirPath(): string {
@@ -58,7 +77,7 @@ export function absoluteWorkflowStatePath(workflowId: string, rootDir = process.
 }
 
 export function workflowTaskRootPath(workflowId: string): string {
-  return `${TASKS_DIR}/${workflowId}`;
+  return workflowStepsDirPath(workflowId);
 }
 
 export function workflowTaskIndexPath(workflowId: string): string {
@@ -66,7 +85,7 @@ export function workflowTaskIndexPath(workflowId: string): string {
 }
 
 export function workflowRelayRootPath(workflowId: string): string {
-  return `${RELAYS_DIR}/${workflowId}`;
+  return `${workflowArtifactsDirPath(workflowId)}/relays`;
 }
 
 export function unitTaskDirPath(workflowId: string, unitId: string): string {
@@ -94,7 +113,7 @@ export function unitBatonPath(workflowId: string, unitId: string): string {
 }
 
 export function unitArtifactsDirPath(workflowId: string, unitId: string): string {
-  return `${unitTaskDirPath(workflowId, unitId)}/artifacts`;
+  return `${workflowArtifactsDirPath(workflowId)}/${unitId}`;
 }
 
 export function unitRelayPath(workflowId: string, unitId: string): string {
@@ -102,7 +121,7 @@ export function unitRelayPath(workflowId: string, unitId: string): string {
 }
 
 export function unitReviewReportPath(workflowId: string, unitId: string): string {
-  return `${REVIEWS_DIR}/${workflowId}-${unitId}.md`;
+  return `${workflowArtifactsDirPath(workflowId)}/${unitId}-review.md`;
 }
 
 export function absolutePath(relativePath: string, rootDir = process.cwd()): string {

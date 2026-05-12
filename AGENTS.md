@@ -4,188 +4,119 @@ Use this as the always-loaded instruction surface for `AGENTS.md`, `CLAUDE.md`, 
 
 ## North Star
 
-LLM capability is already sufficient for many engineering tasks. Quality comes from:
+krow exists to keep coding-agent work aligned with a repository's approved language and current system description.
 
-- one worker per task
-- clean task-local context
-- explicit clarification before broad execution
-- durable baton files
+Quality comes from:
+
+- agreed Glossary terms
+- System Documents grounded in code references
+- Work Docs that state the requested change with the same language
+- small task-local execution
 - evidence-backed verification before completion
 
 ## Runtime Rules
 
-1. Prefer the lightest path that preserves quality: direct work, specialized tool, then delegation.
-2. Evidence first. Read, search, inspect, or run checks before making factual claims.
-3. One spawned worker owns one task with one clear output boundary.
-4. Keep worker context self-contained and task-local. Spawn fresh workers when the objective or evidence set changes.
-5. The lead synthesizes. Workers do not carry strategic understanding for the lead.
-6. Use the filesystem as shared memory across workers, phases, and resumed sessions.
-7. Prefer signal-driven flow over hidden chat conventions. Each unit moves through `clarify -> execute -> verify`.
-8. If verification fails or new ambiguity appears, return to `clarify` with evidence rather than pushing forward with guessed fixes.
-9. Internal retry loops stay internal. Surface a gate only when real external input or approval is required.
-10. Keep diffs small, reviewable, and reversible.
-11. Verify before claiming completion. If verification fails, continue iterating or report a concrete blocker.
+1. Read available Glossary, System Model, and relevant Work Docs before broad execution.
+2. Use repository evidence before making factual claims about behavior, structure, or tests.
+3. Resolve ambiguity when meaning affects implementation, verification, or project language.
+4. Keep each worker focused on one task with one clear output boundary.
+5. Give workers only the context needed for the current step.
+6. Use filesystem artifacts as durable handoff between phases, workers, and resumed sessions.
+7. Let the runner own workflow order. Agents execute the current step and submit the required output.
+8. If verification fails or new ambiguity appears, return to clarify with evidence.
+9. Keep diffs small, reviewable, and reversible.
+10. Verify before claiming completion.
 
 ## Request Routing
 
-Work directly when the task has one narrow objective, one narrow write scope, and one short validation path.
+Use `$check` when the request is to initialize, refresh, or audit krow's understanding of a repository.
 
-Use `$work` when the request should change code, tests, config, documents, or other project artifacts.
+`$check` reads project files, identifies entrypoints and runtime flows, drafts System Documents and System Statements, and asks for approval before writing durable project understanding. It writes only inside `.krow`.
 
-Use `$check` when the request is to initialize, refresh, or audit krow's understanding of an existing codebase.
+Use `$work` when the request should create or change code, tests, config, documents, or other project artifacts.
 
-`$check` reads the project workspace and writes only inside `.krow`. It may update generated evidence, check reports, and approved Project Language or Concept Maps. It does not edit source code.
+`$work` creates a Work Doc folder and moves through PRD, Spec, Plan, Task, Review, and System Model update as needed.
 
-The runtime decides internally whether work is direct, needs clarification, needs multiple units, or should continue until verification passes.
+Work directly only when the task is narrow, local, and verifiable without workflow state.
 
 ## Anchor Gate
 
-Do not start heavy implementation until the task has at least one concrete anchor such as:
+Start broad implementation after the task has at least one concrete anchor such as:
 
-- a file path
-- a symbol or identifier
-- an issue or ticket
+- file path
+- symbol or identifier
+- issue or ticket
 - numbered deliverables
-- explicit acceptance criteria
-- a failing test or error target
+- acceptance criteria
+- failing test or error target
 
-If the request is still broad or ambiguous, plan first.
-
-Planning is complete only when one of the following is true:
-
-- `.krow/plans/prd-*.md` and `.krow/plans/test-spec-*.md` exist
-- the current task packet is concrete enough for `clarify` to proceed without guesswork
-- the user explicitly bypasses planning
-
-## Context Hierarchy
-
-Keep context layered in this order:
-
-1. always-loaded instruction
-2. signal state and current phase
-3. project or user memory
-4. current plan and acceptance criteria
-5. task packet
-6. task status, result, and baton files
-7. ephemeral chat
-
-When context grows noisy, compress it into files and continue with fresh workers rather than carrying long mixed histories.
+If the request is still broad, create or refine the Work Docs first.
 
 ## Filesystem Contract
 
-Use a durable workspace such as `.krow/`:
+krow uses this durable workspace:
 
 ```text
 .krow/
-  index.md
+  system/
+    glossary.md
+    map.md
+    docs/
+  work/
+  check/
   state/
-  plans/
-  tasks/
-  relays/
-  knowledge/
-  logs/
-  artifacts/
+    workflows/
 ```
 
-Minimum task packet:
+`glossary.md` defines approved project terms.
 
-```text
-.krow/tasks/task-001/
-  brief.md
-  context.md
-  status.md
-  result.md
-  artifacts/
-```
+`map.md` is the current high-level System Model index.
 
-Rules:
+`system/docs/*.md` describes current software behavior and responsibilities with System Statements and References.
 
-- `index.md` is the lead's current view of the work: active tasks, dependencies, and next actions.
-- The lead owns cross-task state, plans, and relays.
-- Each worker owns exactly one task directory plus its assigned implementation scope.
-- Workers read their task packet and explicitly assigned source material only.
-- Relays happen through files, not through long chat transcripts.
-- Store bulky evidence in artifacts and link to it from status or result files.
+`work/<work-id>/` records PRD, Spec, Plan, Tasks, and Review for a requested change.
+
+`state/workflows/` stores deterministic runner state and step artifacts.
 
 ## Signal Contract
 
-The flow engine should expose explicit machine-readable signals instead of relying on implicit conversation flow.
+The runner exposes explicit machine-readable signals:
 
-Preferred response kinds:
+- `run`: execute the current autonomous unit
+- `gate`: user or lead input is required
+- `done`: workflow reached a terminal state
+- `fault`: runtime state or submitted payload is invalid
 
-- `run`: the next autonomous unit of work
-- `gate`: human or lead input required
-- `done`: workflow reached a terminal success state
-- `fault`: invalid state, missing artifact, or unrecoverable failure
+Every runnable step should identify:
 
-Each response should carry:
-
-- workflow id
-- current unit id
-- current phase
-- phase instruction or task packet reference
-- required inputs
-- completion callback or next action
-
-Gates are for true external decisions only. Ordinary retries should loop from `verify` back to `clarify` without presenting a failure to the user.
-
-When a gate is needed for clarification, ask for the full current bundle of missing information at once.
-
-Do not ask one missing requirement at a time when several are already known.
-
-## Core Roles
-
-Use narrow runtime roles for workers. Core loop roles:
-
-- `clarify`: tighten scope, expose missing facts, and define the exact execution edge
-- `executor`: implementation and focused refactoring
-- `verifier`: proof of completion
-
-Optional helpers:
-
-- `explore`: read-only mapping and evidence gathering
-- `planner`: task graph, sequencing, acceptance criteria
-- `architect`: boundaries, tradeoffs, and design pressure
-- `debugger`: root-cause isolation and regression narrowing
-- `critic`: structured challenge of plans and designs
-
-Specialists such as `test-engineer`, `security-reviewer`, `code-reviewer`, `designer`, `writer`, or `researcher` should be added only when they materially improve the result.
+- needed input
+- available context
+- missing context
+- context action
+- required output
+- submit command or next action
 
 ## Worker Rules
 
 - Stay inside the assigned scope.
-- Do not recursively split work unless explicitly told to do so.
-- Record facts, decisions, blockers, and proof in the task directory.
-- Leave the task in a state another worker can resume without hidden context.
+- Do not split work recursively unless the task packet asks for it.
+- Record facts, decisions, blockers, and verification in the assigned artifact path.
+- Leave enough durable context for another worker to resume.
 
 ## Verification Rules
 
 - Identify what would prove the claim before making the change.
 - Run proportionate checks based on change size and risk.
-- Report evidence, not vibes.
-- If checks fail, route the issues back into `clarify`.
-- If checks cannot run, say exactly what was skipped and why.
-- Never fill evidence gaps with guesses.
-
-## Learning Rules
-
-Write durable learnings to `.krow/knowledge/` only when they are:
-
-- hard-won
-- non-obvious
-- reusable
-- specific enough to change future decisions
-
-Do not save ephemeral task chatter, generic programming advice, or one-off implementation details.
+- Report evidence, not guesses.
+- If checks cannot run, state exactly what was skipped and why.
 
 ## Completion Rules
 
-Completion requires all of the following:
+Completion requires:
 
-- no unexplained pending tasks
 - relevant checks passed or concrete blockers recorded
-- task packets and relays updated
-- signal state moved to a terminal state
-- a concise final report with outputs, evidence, and remaining risks
+- Work Docs or task artifacts updated when the workflow uses them
+- System Model updates proposed or applied when code meaning changed
+- concise final report with outputs, evidence, and remaining risks
 
-For the full system design, role catalog, state model, and signal model, see `docs/HARNESS.md`.
+For the full v2 design, read [docs/v2/MASTERPLAN.md](docs/v2/MASTERPLAN.md).

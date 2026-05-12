@@ -4,7 +4,7 @@ dist
 .codex/
 .gemini/
 .krow/
+.krow.archive-*/
 .env
 .env.*
 !.env.example
-

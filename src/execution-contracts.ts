@@ -7,7 +7,7 @@ import type { DocumentRetrieval, KrowDocumentSummary, TraceLink } from "./docume
 
 export interface ExecutionContract {
   sourceRefs: string[];
-  conceptKeys: string[];
+  termIds: string[];
   prdIds: string[];
   planIds: string[];
   userStoryIds: string[];
@@ -35,7 +35,7 @@ export function executionContractFromDocuments(documents: KrowDocumentSummary[])
   const exampleIds = linksOfKind(documents, "example");
   return {
     sourceRefs: unique(documents.map((document) => document.ref)),
-    conceptKeys: unique(documents.flatMap((document) => document.concepts)),
+    termIds: unique(documents.flatMap((document) => document.terms)),
     prdIds: linksOfKind(documents, "prd"),
     planIds: linksOfKind(documents, "plan"),
     userStoryIds: linksOfKind(documents, "user-story"),

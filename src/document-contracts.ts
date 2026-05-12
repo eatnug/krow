@@ -1,16 +1,15 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  EXAMPLES_DIR,
-  PRDS_DIR,
-  PLANS_DIR,
-  REVIEWS_DIR,
+  SYSTEM_DOCS_DIR,
+  WORK_DIR,
   absolutePath,
+  glossaryPath,
 } from "./workflow-files.js";
 import type { DecisionAnswer, DecisionPrompt } from "./types.js";
 
 export type ApprovalStatus = "draft" | "needs-revision" | "approved" | "missing";
-export type KrowDocumentKind = "prd" | "plan" | "example" | "review";
+export type KrowDocumentKind = "glossary" | "system" | "prd" | "spec" | "plan" | "task" | "review";
 
 export interface ApprovalSection {
   status: ApprovalStatus;
@@ -21,7 +20,7 @@ export interface ApprovalSection {
 
 export interface TraceLink {
   id: string;
-  kind: "prd" | "user-story" | "acceptance-criteria" | "example" | "plan" | "review";
+  kind: "prd" | "spec" | "plan" | "task" | "user-story" | "acceptance-criteria" | "example" | "review";
   ref: string;
   label?: string;
 }
@@ -31,15 +30,18 @@ export interface KrowDocumentSummary {
   ref: string;
   title: string;
   approval: ApprovalSection;
-  concepts: string[];
+  terms: string[];
   traceLinks: TraceLink[];
   searchText: string;
 }
 
 export interface KrowDocumentSet {
+  glossary: KrowDocumentSummary[];
+  systemDocuments: KrowDocumentSummary[];
   prds: KrowDocumentSummary[];
+  specs: KrowDocumentSummary[];
   plans: KrowDocumentSummary[];
-  examples: KrowDocumentSummary[];
+  tasks: KrowDocumentSummary[];
   reviews: KrowDocumentSummary[];
   all: KrowDocumentSummary[];
 }
@@ -57,17 +59,16 @@ export interface TraceOverviewRow {
   refs: string[];
 }
 
-const documentDirs: Array<{ kind: KrowDocumentKind; dir: string }> = [
-  { kind: "prd", dir: PRDS_DIR },
-  { kind: "plan", dir: PLANS_DIR },
-  { kind: "example", dir: EXAMPLES_DIR },
-  { kind: "review", dir: REVIEWS_DIR },
-];
-
 function normalizeStatus(value: string | undefined): ApprovalStatus {
   const normalized = value?.trim().toLowerCase();
-  if (normalized === "approved" || normalized === "draft" || normalized === "needs-revision") {
-    return normalized;
+  if (normalized === "approved") {
+    return "approved";
+  }
+  if (normalized === "needs-revision" || normalized === "needs work" || normalized === "needs decision") {
+    return "needs-revision";
+  }
+  if (normalized === "draft" || normalized === "proposed" || normalized === "in progress" || normalized === "pending") {
+    return "draft";
   }
   return "missing";
 }
@@ -123,7 +124,7 @@ function listItems(content: string | undefined): string[] {
 export function parseApprovalSection(content: string): ApprovalSection {
   const approval = sectionContent(content, "Approval");
   if (!approval) {
-    return { status: "missing", decisions: [] };
+    return { status: normalizeStatus(labelValue(content, "Status")), decisions: [] };
   }
 
   return {
@@ -134,8 +135,11 @@ export function parseApprovalSection(content: string): ApprovalSection {
   };
 }
 
-function conceptList(content: string): string[] {
-  return listItems(sectionContent(content, "Concepts"));
+function termList(content: string): string[] {
+  return [
+    ...listItems(sectionContent(content, "Related Terms")),
+    ...listItems(sectionContent(content, "Terms")),
+  ];
 }
 
 function pushTraceLink(links: TraceLink[], id: string, kind: TraceLink["kind"], ref: string, label?: string): void {
@@ -154,6 +158,18 @@ function traceLinks(content: string, ref: string, kind: KrowDocumentKind): Trace
   for (const match of content.matchAll(/^Plan ID:\s*(PLAN-\d+)\s*$/gim)) {
     pushTraceLink(links, match[1], "plan", ref);
   }
+  for (const match of content.matchAll(/^ID:\s*(PRD:[^\s]+)\s*$/gim)) {
+    pushTraceLink(links, match[1], "prd", ref);
+  }
+  for (const match of content.matchAll(/^ID:\s*(SPEC:[^\s]+)\s*$/gim)) {
+    pushTraceLink(links, match[1], "spec", ref);
+  }
+  for (const match of content.matchAll(/^ID:\s*(PLAN:[^\s]+)\s*$/gim)) {
+    pushTraceLink(links, match[1], "plan", ref);
+  }
+  for (const match of content.matchAll(/^ID:\s*(TASK:[^\s]+)\s*$/gim)) {
+    pushTraceLink(links, match[1], "task", ref);
+  }
   for (const match of content.matchAll(/^Example ID:\s*(EX-\d+)\s*$/gim)) {
     pushTraceLink(links, match[1], "example", ref);
   }
@@ -170,9 +186,10 @@ function traceLinks(content: string, ref: string, kind: KrowDocumentKind): Trace
     pushTraceLink(links, match[1], "example", ref, match[2]?.trim());
   }
 
-  if (links.length === 0 && kind === "prd") {
+  if (links.length === 0 && (kind === "prd" || kind === "spec" || kind === "plan" || kind === "task")) {
     const prdId = path.basename(ref, ".md").toUpperCase();
-    pushTraceLink(links, prdId, "prd", ref);
+    const linkKind = kind === "task" ? "task" : kind;
+    pushTraceLink(links, prdId, linkKind, ref);
   }
 
   return links;
@@ -184,7 +201,7 @@ export function parseKrowDocument(kind: KrowDocumentKind, ref: string, content: 
     ref,
     title: firstHeading(content, path.basename(ref, ".md")),
     approval: parseApprovalSection(content),
-    concepts: conceptList(content),
+    terms: termList(content),
     traceLinks: traceLinks(content, ref, kind),
     searchText: normalizeSearchText(content),
   };
@@ -204,29 +221,83 @@ function scanDirectory(rootDir: string, kind: KrowDocumentKind, dir: string): Kr
     });
 }
 
+function scanWorkDocuments(rootDir: string, target: KrowDocumentKind): KrowDocumentSummary[] {
+  const absoluteDir = absolutePath(WORK_DIR, rootDir);
+  if (!existsSync(absoluteDir)) {
+    return [];
+  }
+
+  const summaries: KrowDocumentSummary[] = [];
+  const workDirs = readdirSync(absoluteDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  for (const workDir of workDirs) {
+    const baseRef = `${WORK_DIR}/${workDir.name}`;
+    const basePath = absolutePath(baseRef, rootDir);
+    const directFile =
+      target === "prd" ? "prd.md" :
+      target === "spec" ? "spec.md" :
+      target === "plan" ? "plan.md" :
+      target === "review" ? "review.md" :
+      undefined;
+
+    if (directFile) {
+      const ref = `${baseRef}/${directFile}`;
+      const filePath = absolutePath(ref, rootDir);
+      if (existsSync(filePath)) {
+        summaries.push(parseKrowDocument(target, ref, readFileSync(filePath, "utf8")));
+      }
+      continue;
+    }
+
+    if (target === "task") {
+      const taskDir = path.join(basePath, "tasks");
+      if (!existsSync(taskDir)) {
+        continue;
+      }
+      for (const taskFile of readdirSync(taskDir, { withFileTypes: true })) {
+        if (!taskFile.isFile() || !taskFile.name.endsWith(".md")) {
+          continue;
+        }
+        const ref = `${baseRef}/tasks/${taskFile.name}`;
+        summaries.push(parseKrowDocument("task", ref, readFileSync(absolutePath(ref, rootDir), "utf8")));
+      }
+    }
+  }
+  return summaries;
+}
+
 export function scanKrowDocuments(rootDir = process.cwd()): KrowDocumentSet {
-  const prds = scanDirectory(rootDir, "prd", PRDS_DIR);
-  const plans = scanDirectory(rootDir, "plan", PLANS_DIR);
-  const examples = scanDirectory(rootDir, "example", EXAMPLES_DIR);
-  const reviews = scanDirectory(rootDir, "review", REVIEWS_DIR);
+  const glossaryRef = glossaryPath();
+  const glossaryFilePath = absolutePath(glossaryRef, rootDir);
+  const glossary = existsSync(glossaryFilePath)
+    ? [parseKrowDocument("glossary", glossaryRef, readFileSync(glossaryFilePath, "utf8"))]
+    : [];
+  const systemDocuments = scanDirectory(rootDir, "system", SYSTEM_DOCS_DIR);
+  const prds = scanWorkDocuments(rootDir, "prd");
+  const specs = scanWorkDocuments(rootDir, "spec");
+  const plans = scanWorkDocuments(rootDir, "plan");
+  const tasks = scanWorkDocuments(rootDir, "task");
+  const reviews = scanWorkDocuments(rootDir, "review");
   return {
+    glossary,
+    systemDocuments,
     prds,
+    specs,
     plans,
-    examples,
+    tasks,
     reviews,
-    all: [...prds, ...plans, ...examples, ...reviews],
+    all: [...glossary, ...systemDocuments, ...prds, ...specs, ...plans, ...tasks, ...reviews],
   };
 }
 
 export function findRelatedDocuments(
   documents: KrowDocumentSet,
   request: string,
-  conceptKeys: string[],
+  termIds: string[],
 ): DocumentRetrieval {
   const normalizedRequest = normalizeSearchText(request);
-  const normalizedConcepts = conceptKeys.map(normalizeSearchText).filter(Boolean);
+  const normalizedTerms = termIds.map(normalizeSearchText).filter(Boolean);
   const related = documents.all.filter((doc) => {
-    if (normalizedConcepts.some((concept) => doc.concepts.map(normalizeSearchText).includes(concept))) {
+    if (normalizedTerms.some((term) => doc.terms.map(normalizeSearchText).includes(term))) {
       return true;
     }
     return normalizedRequest
