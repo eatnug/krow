@@ -7,6 +7,11 @@ import { spawnSync } from "node:child_process";
 
 const root = mkdtempSync(path.join(tmpdir(), "krow-v2-smoke-"));
 const cli = path.resolve("dist/cli.js");
+const packageMetadata = JSON.parse(readFileSync(path.resolve("package.json"), "utf8"));
+
+if (packageMetadata.bin?.["krow-cli"] !== "dist/cli.js") {
+  throw new Error("package should expose a krow-cli bin alias for reliable npx execution");
+}
 
 function run(args) {
   const result = spawnSync(process.execPath, [cli, ...args], {

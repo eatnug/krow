@@ -4,7 +4,7 @@
 
 ## Use
 
-The npm package is `krow-cli`. The installed command is `krow`.
+The npm package is `krow-cli`. It installs `krow-cli` and `krow`.
 
 ```bash
 # 1. bootstrap krow in a repo
