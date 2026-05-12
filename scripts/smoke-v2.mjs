@@ -73,6 +73,7 @@ writeFileSync(
     "}",
     "",
     "export const reviewLanguage = 'The Behavior Record should which open update durable extract policy';",
+    "export const agentSurfaceLanguage = 'Use Work Doc Codex Claude Gemini';",
     "",
   ].join("\n"),
 );
@@ -106,6 +107,7 @@ const check = readJson(run(["check", "--root", root, "--about", [
   "Smoke project with Story and Plugin concepts.",
   "Behavior and Record are not first-class System Documents.",
   "Revision words like should, which, open, source, update, durable, extract, and policy are not concept names.",
+  "Use source code as evidence, create Work Doc artifacts, and support Codex, Claude, and Gemini agent surfaces.",
 ].join(" ")]));
 assertExists(check.check.reportRef);
 assertExists(check.check.observedRef);
@@ -134,6 +136,11 @@ for (const noisyId of [
   "DOC:extract",
   "DOC:policy",
   "DOC:the",
+  "DOC:use",
+  "DOC:doc",
+  "DOC:codex",
+  "DOC:claude",
+  "DOC:gemini",
 ]) {
   if (draftIds.has(noisyId)) {
     throw new Error(`check should not promote revision guidance into ${noisyId}`);
