@@ -89,42 +89,56 @@ Treat the argument as user-provided context for this check.
 Run with the user seed in place of \`<user seed>\`:
 \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
 
-Parse the JSON response and read the report refs.
+Parse the JSON response and read these refs when present:
+
+- \`check.evidenceRef\`
+- \`check.readingPlanRef\`
+- \`check.understandingRef\`
+- \`check.proposalsRef\`
+- \`check.questionsRef\`
+- \`check.reportRef\`
+- \`check.decisionsRef\`
+
+The initial \`check.decisions\` array is normally empty. It becomes populated after proposals are written and \`check-decisions\` runs.
 
 ## Responsibility Boundary
 
-Code controls the workflow, stores evidence, validates artifacts, and applies approved updates.
+Code controls the workflow, records objective repository evidence, validates artifact shape, creates approval prompts, and applies approved updates.
 
-AI reads repository evidence, writes the reading plan, explains the software in project language, drafts proposals, and identifies gaps.
+AI reads repository evidence, writes the reading plan, traces the code it actually reads, explains the software in project language, drafts proposals, and identifies gaps.
 
 User approves names, meanings, boundaries, ownership, product intent, and decisions that repository evidence cannot settle.
 
 ## Check Work
 
-Use the report refs, user context, current \`.krow\` documents, and repository files as available input.
+Use the returned refs, user context, current \`.krow\` documents, and repository files as available input.
 
-Read enough evidence to answer:
+Work in this order:
 
-- what this repository appears to be
-- where future agents should start reading
-- which flows, modules, tests, or docs were actually inspected
-- which Glossary or System Document proposals are backed by evidence
-- which names, boundaries, or meanings need user approval
+1. Read \`evidenceRef\` and \`reportRef\`.
+2. Write \`readingPlanRef\` with the repository orientation, reading order, reading boundary, and refresh conditions.
+3. Read repository files according to the reading plan.
+4. Write \`understandingRef\` with what was read, what the software appears to mean, proposed terms/documents, and gaps.
+5. Write \`proposalsRef\` only with names, terms, statements, and references sourced from user context, repository evidence, or existing project documents.
+6. Write \`questionsRef\` with bundled user questions when meaning, ownership, boundary, or product intent remains unresolved.
 
-Write or revise check artifacts only inside \`.krow\`. Keep proposed names, terms, and System Documents sourced from user context, repository evidence, or existing project documents. When a readable name is missing, synthesize it from the sourced material that created the proposal.
+When proposals are ready for user approval, set \`proposals.json\` stage to \`ready-for-approval\` and run:
 
-If decisions are present, present the full decision bundle to the user in one message. Apply only explicit approve, revise, or reject decisions:
+\`${KROW_COMMAND_PLACEHOLDER} check-decisions <check_id>\`
+
+Present the decision bundle to the user in one message. Apply explicit approve, revise, or reject decisions:
 
 \`${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> <json|path|->\`
 
 During \`$check\`, durable System changes go through the runner only:
 
-- create or refresh proposals with \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
+- create evidence and empty proposal artifacts with \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
+- create approval prompts with \`${KROW_COMMAND_PLACEHOLDER} check-decisions <check_id>\`
 - apply approved proposals with \`${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> <json|path|->\`
-- if repository reading shows that the raw proposals are too shallow, revise or reject them instead of approving them as-is
-- if the user names a missing first-class term or document after review, run a refined check so the runner records the proposal, decision, apply result, and audit report
+- when repository reading shows that proposals are too shallow, revise the proposals before approval
+- when the user names a missing first-class term or document after review, add it to proposals with evidence and run \`check-decisions\` again
 
-\`$check\` writes only inside \`.krow\`. Treat generated apply reports as runner-owned audit output.
+Keep all \`$check\` writes inside \`.krow\`. Treat generated apply reports as runner-owned audit output.
 `;
 
 const CODEX_WORK_SKILL = `---

@@ -111,16 +111,24 @@ const check = readJson(run(["check", "--root", root, "--about", [
 ].join(" ")]));
 assertExists(check.check.reportRef);
 assertExists(check.check.observedRef);
+assertExists(check.check.evidenceRef);
+assertExists(check.check.readingPlanRef);
+assertExists(check.check.understandingRef);
+assertExists(check.check.proposalsRef);
+assertExists(check.check.questionsRef);
 assertExists(check.check.draftRef);
 assertExists(check.check.decisionsRef);
-const checkDraft = JSON.parse(readFileSync(path.join(root, check.check.draftRef), "utf8"));
-if (!checkDraft.understanding || !Array.isArray(checkDraft.understanding.entrypoints)) {
-  throw new Error("check draft should include repository understanding before System Document drafts");
+const checkProposal = JSON.parse(readFileSync(path.join(root, check.check.proposalsRef), "utf8"));
+if (!checkProposal.understanding || !Array.isArray(checkProposal.understanding.entrypoints)) {
+  throw new Error("check proposals should include repository understanding before agent drafting");
 }
-if (!Array.isArray(checkDraft.systemDocuments) || checkDraft.systemDocuments.length === 0) {
-  throw new Error("check draft should include System Document drafts");
+if (checkProposal.stage !== "agent-draft-required") {
+  throw new Error("check should wait for an agent-authored proposal before approval");
 }
-const draftIds = new Set(checkDraft.systemDocuments.map((document) => document.id));
+if (!Array.isArray(checkProposal.systemDocuments) || checkProposal.systemDocuments.length !== 0) {
+  throw new Error("check should not synthesize System Document drafts from raw strings");
+}
+const draftIds = new Set(checkProposal.systemDocuments.map((document) => document.id));
 for (const noisyId of [
   "DOC:story",
   "DOC:plugin",
@@ -145,7 +153,47 @@ for (const noisyId of [
     throw new Error(`check should not promote revision guidance into ${noisyId}`);
   }
 }
-const unsafeDecision = check.check.decisions[0];
+const agentProposal = {
+  ...checkProposal,
+  stage: "ready-for-approval",
+  subjects: [{
+    key: "smoke-krow",
+    title: "Smoke Krow",
+    aliases: [],
+    evidence: ["package.json", "src/cli.ts"],
+    symbols: ["main"],
+    kind: "subject",
+    layer: "product",
+    evidenceKinds: ["agent-read"],
+    means: "The smoke repository exposes a small CLI package used by the test.",
+  }],
+  systemDocuments: [{
+    id: "DOC:smoke-krow",
+    title: "Smoke Krow",
+    kind: "Responsibility Area",
+    status: "proposed",
+    summary: "The smoke repository exposes a small CLI package used by the test.",
+    terms: ["TERM:smoke-krow"],
+    references: ["Source: package.json", "Source: src/cli.ts"],
+    sourceSubjectKey: "smoke-krow",
+    statements: [{
+      id: "STMT:smoke-krow.summary",
+      title: "Smoke Krow Summary",
+      status: "proposed",
+      statement: "The smoke repository exposes a small CLI package used by the test.",
+      terms: ["TERM:smoke-krow"],
+      references: ["Source: package.json", "Source: src/cli.ts"],
+      notes: ["Drafted by the smoke test as an agent-authored proposal."],
+    }],
+  }],
+};
+writeFileSync(path.join(root, check.check.proposalsRef), `${JSON.stringify(agentProposal, null, 2)}\n`);
+const decisionBuild = readJson(run(["check-decisions", check.check.checkId, "--root", root]));
+if (!Array.isArray(decisionBuild.checkDecisions.decisions) || decisionBuild.checkDecisions.decisions.length === 0) {
+  throw new Error("check-decisions should turn completed proposals into approval prompts");
+}
+assertExists(decisionBuild.checkDecisions.decisionsRef);
+const unsafeDecision = decisionBuild.checkDecisions.decisions[0];
 const unsafeApply = readJson(run(["check-apply", check.check.checkId, JSON.stringify([{
   decisionId: unsafeDecision.id,
   selectedOptionId: "revise",
@@ -158,7 +206,7 @@ if (!unsafeApply.applied.skipped.some((item) => item.includes("revise cannot cha
   throw new Error("check-apply should reject revisions that create a new System Document identity");
 }
 assertMissing(".krow/system/docs/manual-extra-doc.md");
-const approveAnswers = check.check.decisions.map((decision) => ({
+const approveAnswers = decisionBuild.checkDecisions.decisions.map((decision) => ({
   decisionId: decision.id,
   selectedOptionId: "approve",
 }));
@@ -171,7 +219,7 @@ if (!systemMap.includes("## System Documents") || !systemMap.includes("DOC:")) {
 if (systemMap.includes("Smoke project with story and plugin concepts")) {
   throw new Error("System Map should not promote check about input into repository purpose");
 }
-const approvedDocRef = checkDraft.systemDocuments[0].id.replace(/^DOC:/, "");
+const approvedDocRef = agentProposal.systemDocuments[0].id.replace(/^DOC:/, "");
 assertExists(`.krow/system/docs/${approvedDocRef}.md`);
 
 const work = readJson(run(["work", "Add smoke behavior", "--root", root, "--work-id", "smoke-work"]));

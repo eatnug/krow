@@ -31,7 +31,7 @@ Quality comes from:
 
 Use `$check` when the request is to initialize, refresh, or audit krow's understanding of a repository.
 
-`$check` reads project files, identifies entrypoints and runtime flows, drafts System Documents and System Statements, and asks for approval before writing durable project understanding. It writes only inside `.krow`.
+`$check` collects repository evidence, prepares reading-plan and understanding artifacts, lets the agent draft project-language proposals from evidence, and asks for approval before writing durable project understanding. It writes only inside `.krow`.
 
 Use `$work` when the request should create or change code, tests, config, documents, or other project artifacts.
 

@@ -58,7 +58,7 @@ import {
 } from "./document-contracts.js";
 import { executionContractFromRetrieval } from "./execution-contracts.js";
 import { writeUnitReviewReport } from "./review-report.js";
-import { applyProjectCheckDecisions, runProjectCheck } from "./project-check.js";
+import { applyProjectCheckDecisions, buildProjectCheckDecisions, runProjectCheck } from "./project-check.js";
 import { createWorkDocuments } from "./templates.js";
 
 type FlagMap = Record<string, string | boolean>;
@@ -146,7 +146,8 @@ const proseSymbolStopWords = new Set([
 const localControlDescriptions: Record<LocalControlCommandName, string> = {
   route: "Resolve explicit chat or work intent without creating workflow state.",
   intake: "Produce an intake plan and missing-context analysis without creating workflow state.",
-  check: "Scan repo evidence, write a krow check report, and draft Glossary/System Model updates without changing source code.",
+  check: "Collect repository evidence and create check artifacts without changing source code.",
+  "check-decisions": "Build approval prompts from completed check proposals.",
   "check-apply": "Apply explicit krow check decisions to .krow Glossary and System Documents only.",
   work: "Create a v2 Work Doc folder from a request, create workflow state, and emit the first signal.",
   documents: "Scan krow Markdown documents, approval sections, and derived trace ids.",
@@ -179,6 +180,7 @@ function printUsage(): void {
       "  route <message> [--intent <work|chat>]",
       "  intake <message> [--intent <work|chat>]",
       "  check [description] [--about <text>] [--scope <path>] [--root <dir>]",
+      "  check-decisions <checkId> [--root <dir>]",
       "  check-apply <checkId> <json|path|-> [--root <dir>]",
       "  work <request> [--root <dir>] [--work-id <id>]",
       "  documents [message] [--root <dir>]",
@@ -1147,9 +1149,16 @@ function resolveControlPolicy(commandName: LocalControlCommandName): CapabilityP
         ["repo_scan", "search_code", "inspect_docs", "read_state", "write_state", "emit_gate"],
         [
           "local control command only",
-          "writes observed evidence, draft decisions, and check report under .krow only",
+          "writes repository evidence and check artifacts under .krow only",
           "does not edit source code",
         ],
+      );
+    case "check-decisions":
+      return createPolicy(
+        "control:check-decisions",
+        "control",
+        ["inspect_docs", "read_state", "write_state", "emit_gate"],
+        ["local control command only", "turns completed check proposals into approval prompts"],
       );
     case "check-apply":
       return createPolicy(
@@ -1592,6 +1601,23 @@ function handleCheck(args: string[], flags: FlagMap): void {
   });
 }
 
+function handleCheckDecisions(args: string[], flags: FlagMap): void {
+  const [checkId] = args;
+  if (!checkId) {
+    throw new Error("check-decisions requires <checkId>");
+  }
+
+  const result = buildProjectCheckDecisions({
+    checkId,
+    rootDir: rootDir(flags),
+  });
+
+  outputJSON({
+    control: getLocalControlCommand("check-decisions"),
+    checkDecisions: result,
+  });
+}
+
 function handleCheckApply(args: string[], flags: FlagMap): void {
   const [checkId, inputValue] = args;
   if (!checkId || !inputValue) {
@@ -1850,6 +1876,9 @@ function main(): void {
       return;
     case "check":
       handleCheck(positionals, flags);
+      return;
+    case "check-decisions":
+      handleCheckDecisions(positionals, flags);
       return;
     case "check-apply":
       handleCheckApply(positionals, flags);

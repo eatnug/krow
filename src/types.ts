@@ -498,6 +498,7 @@ export type LocalControlCommandName =
   | "route"
   | "intake"
   | "check"
+  | "check-decisions"
   | "check-apply"
   | "work"
   | "documents"

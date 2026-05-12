@@ -29,9 +29,11 @@ interface RepositoryUnderstanding {
   sourceRoots: string[];
   testRoots: string[];
   entrypoints: string[];
+  sourceEntrypointCandidates: string[];
   runtimeFiles: string[];
   supportFiles: string[];
   flows: RepositoryFlow[];
+  sourceFlowCandidates: RepositoryFlow[];
   readingOrder: string[];
   notes: string[];
 }
@@ -100,9 +102,22 @@ interface CheckProposal {
   checkId: string;
   generatedAt: string;
   about?: string;
+  stage: "agent-draft-required" | "ready-for-approval";
   understanding: RepositoryUnderstanding;
   subjects: ObservedSystemSubject[];
   systemDocuments: SystemDocumentDraft[];
+}
+
+interface CheckEvidenceBundle {
+  checkId: string;
+  generatedAt: string;
+  about?: string;
+  inventory: CodeInventory;
+  existing: {
+    glossaryRef: string;
+    systemMapRef: string;
+    systemDocumentRefs: string[];
+  };
 }
 
 export interface ProjectCheckResult {
@@ -110,6 +125,11 @@ export interface ProjectCheckResult {
   status: "clean" | "needs-review";
   reportRef: string;
   observedRef: string;
+  evidenceRef: string;
+  readingPlanRef: string;
+  understandingRef: string;
+  proposalsRef: string;
+  questionsRef: string;
   draftRef: string;
   decisionsRef: string;
   findings: CheckFinding[];
@@ -122,6 +142,13 @@ export interface ProjectCheckResult {
     findingCount: number;
     writesOutsideKrow: false;
   };
+}
+
+export interface ProjectCheckDecisionResult {
+  checkId: string;
+  proposalsRef: string;
+  decisionsRef: string;
+  decisions: DecisionPrompt[];
 }
 
 export interface CheckApplyResult {
@@ -180,7 +207,6 @@ const symbolicExtensions = new Set([...sourceExtensions, ...configExtensions]);
 const maxReadableBytes = 500_000;
 const maxFiles = 4000;
 const maxSymbolsPerFile = 40;
-const maxDraftSubjects = 16;
 const maxApprovalQuestions = 8;
 
 const supportPathPrefixes = [".codex/", ".claude/", ".gemini/"];
@@ -197,53 +223,6 @@ const artifactPathFragments = [
 ];
 const importExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"];
 const knownAcronyms = new Set(["ai", "api", "cli", "css", "ddd", "html", "http", "json", "prd", "sql", "ui", "url", "ux"]);
-
-const subjectStopWords = new Set([
-  "app",
-  "args",
-  "async",
-  "base",
-  "build",
-  "cli",
-  "client",
-  "command",
-  "config",
-  "const",
-  "context",
-  "data",
-  "default",
-  "dist",
-  "docs",
-  "error",
-  "file",
-  "helper",
-  "index",
-  "input",
-  "install",
-  "json",
-  "layer",
-  "lib",
-  "main",
-  "model",
-  "node",
-  "output",
-  "package",
-  "path",
-  "props",
-  "readme",
-  "request",
-  "result",
-  "script",
-  "server",
-  "src",
-  "state",
-  "test",
-  "tests",
-  "type",
-  "types",
-  "utils",
-  "value",
-]);
 
 function nowCompact(): string {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -279,39 +258,6 @@ function titleFromWords(words: string[]): string {
     }
     return word.slice(0, 1).toUpperCase() + word.slice(1);
   }).join(" ");
-}
-
-function splitIdentifier(value: string): string[] {
-  return value
-    .replace(/\.[^.]+$/, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-    .replace(/[^A-Za-z0-9가-힣]+/g, " ")
-    .split(/\s+/)
-    .map((word) => word.trim())
-    .filter(Boolean);
-}
-
-function subjectTitleFromIdentifier(value: string): string | undefined {
-  const words = splitIdentifier(value).filter((word) => {
-    const normalized = word.toLowerCase();
-    return word.length > 1 && !subjectStopWords.has(normalized) && !/^\d+$/.test(word);
-  });
-  if (words.length === 0 || words.length > 5) {
-    return undefined;
-  }
-  if (!words.some((word) => word.length >= 4 || /[가-힣]/.test(word))) {
-    return undefined;
-  }
-  return titleFromWords(words);
-}
-
-function titleFromIdentifierLiteral(value: string): string | undefined {
-  const words = splitIdentifier(value).filter((word) => word.length > 0 && !/^\d+$/.test(word));
-  if (words.length === 0 || words.length > 6) {
-    return undefined;
-  }
-  return titleFromWords(words);
 }
 
 function shouldReadFile(filePath: string): boolean {
@@ -528,6 +474,33 @@ function resolveRepoFile(rootDir: string, candidate: string): string | undefined
     }
   }
   return undefined;
+}
+
+function sourceEntrypointCandidates(packageEntrypoints: Set<string>, files: string[]): string[] {
+  const candidates = new Set<string>();
+  for (const packageEntrypoint of packageEntrypoints) {
+    for (const candidate of sourceEntrypointCounterparts(packageEntrypoint, files)) {
+      candidates.add(candidate);
+    }
+  }
+  return [...candidates].sort();
+}
+
+function sourceEntrypointCounterparts(packageEntrypoint: string, files: string[]): string[] {
+  const entryWithoutExtension = packageEntrypoint.replace(/\.[^.]+$/, "");
+  const entryBasename = path.posix.basename(entryWithoutExtension);
+  if (!entryBasename) {
+    return [];
+  }
+
+  return files.filter((file) => {
+    const extension = path.extname(file);
+    if (!sourceExtensions.has(extension)) {
+      return false;
+    }
+    const withoutExtension = file.replace(/\.[^.]+$/, "");
+    return file !== packageEntrypoint && path.posix.basename(withoutExtension) === entryBasename;
+  });
 }
 
 function packageEntrypoints(rootDir: string): Set<string> {
@@ -812,17 +785,22 @@ function buildRepositoryUnderstanding(
   rootDir: string,
   files: CodeInventoryFile[],
   entrypoints: Set<string>,
+  sourceEntrypoints: string[],
   runtimeFileOrder: string[],
 ): RepositoryUnderstanding {
+  const fileSet = new Set(files.map((file) => file.path));
   const runtimeFiles = files.filter((file) => file.role === "runtime").map((file) => file.path);
   const supportFiles = files.filter((file) => file.role === "support").map((file) => file.path);
   const flows = entrypoints.size > 0
-    ? [...entrypoints].flatMap((entrypoint) => commandFlows(rootDir, entrypoint))
+    ? [...entrypoints].filter((entrypoint) => fileSet.has(entrypoint)).flatMap((entrypoint) => commandFlows(rootDir, entrypoint))
     : [];
   const uniqueFlows = dedupeRepositoryFlows(flows);
+  const sourceFlowCandidates = dedupeRepositoryFlows(sourceEntrypoints.flatMap((entrypoint) => commandFlows(rootDir, entrypoint)));
   const readingOrder = unique([
     ...[...entrypoints],
+    ...sourceEntrypoints,
     ...uniqueFlows.flatMap((flow) => flow.files),
+    ...sourceFlowCandidates.flatMap((flow) => flow.files),
     ...runtimeFileOrder,
   ]).filter((ref) => files.some((file) => file.path === ref));
 
@@ -830,7 +808,9 @@ function buildRepositoryUnderstanding(
   if (entrypoints.size === 0) {
     notes.push("No package or export entrypoint was detected; runtime flow candidates are limited.");
   }
-  if (uniqueFlows.length === 0) {
+  if (uniqueFlows.length === 0 && sourceFlowCandidates.length > 0) {
+    notes.push("No command or route flow was detected from package entrypoints; source flow candidates were recorded separately.");
+  } else if (uniqueFlows.length === 0) {
     notes.push("No command or route flow was detected from the entrypoint.");
   }
 
@@ -841,9 +821,11 @@ function buildRepositoryUnderstanding(
     sourceRoots: topLevelRoots(files, (file) => file.kind === "source"),
     testRoots: topLevelRoots(files, (file) => file.kind === "test"),
     entrypoints: [...entrypoints],
+    sourceEntrypointCandidates: sourceEntrypoints,
     runtimeFiles,
     supportFiles,
     flows: uniqueFlows,
+    sourceFlowCandidates,
     readingOrder,
     notes,
   };
@@ -897,6 +879,7 @@ function buildCodeInventory(rootDir: string, scope?: string): CodeInventory {
   const root = path.resolve(rootDir);
   const scopedFiles = scopeFiles(root, scope);
   const entrypoints = packageEntrypoints(root);
+  const sourceEntrypoints = sourceEntrypointCandidates(entrypoints, scopedFiles);
   const runtimeFileOrder = runtimeReachableFileOrder(root, scopedFiles, entrypoints);
   const runtimeReachable = new Set(runtimeFileOrder);
   const files = scopedFiles.map((relativePath): CodeInventoryFile => {
@@ -923,7 +906,7 @@ function buildCodeInventory(rootDir: string, scope?: string): CodeInventory {
     generatedAt: nowIso(),
     root,
     fileCount: files.length,
-    understanding: buildRepositoryUnderstanding(root, files, entrypoints, runtimeFileOrder),
+    understanding: buildRepositoryUnderstanding(root, files, entrypoints, sourceEntrypoints, runtimeFileOrder),
     files,
   };
 }
@@ -1010,171 +993,6 @@ function glossaryTerms(content: string): string[] {
   return unique(values.map(normalizeSearchText).filter(Boolean));
 }
 
-function addPackageTerms(
-  rootDir: string,
-  addCandidate: (title: string | undefined, evidence: string, options: {
-    kind: ObservedSystemSubject["kind"];
-    layer: ObservedSystemSubject["layer"];
-    score: number;
-    evidenceKind: string;
-    means: string;
-    symbol?: string;
-  }) => void,
-): void {
-  const pkg = packageJson(rootDir);
-  if (!pkg) {
-    return;
-  }
-  const name = typeof pkg.name === "string" ? pkg.name : undefined;
-  if (name) {
-    addCandidate(titleFromIdentifierLiteral(name), "package.json:name", {
-      kind: "subject",
-      layer: "product",
-      score: 7,
-      evidenceKind: "package-name",
-      means: `package.json declares ${name} as the package name.`,
-    });
-  }
-  if (pkg.bin && typeof pkg.bin === "object") {
-    for (const key of Object.keys(pkg.bin as Record<string, unknown>)) {
-      addCandidate(titleFromIdentifierLiteral(key), "package.json:bin", {
-        kind: "interface",
-        layer: "product",
-        score: 5,
-        evidenceKind: "package-bin",
-        means: `package.json declares ${key} as a command.`,
-      });
-    }
-  }
-}
-
-function addRepositoryUnderstandingCandidates(
-  understanding: RepositoryUnderstanding,
-  addCandidate: (title: string | undefined, evidence: string, options: {
-    kind: ObservedSystemSubject["kind"];
-    layer: ObservedSystemSubject["layer"];
-    score: number;
-    evidenceKind: string;
-    means: string;
-    symbol?: string;
-  }) => void,
-): void {
-  for (const flow of understanding.flows) {
-    for (const [index, ref] of flow.files.entries()) {
-      addCandidate(flow.title, ref, {
-        kind: "module",
-        layer: "product",
-        score: index === 0 ? 7 : 4,
-        evidenceKind: "entrypoint-flow",
-        means: flow.summary,
-      });
-    }
-  }
-}
-
-function removeDocumentOnlyEvidence(candidate: ObservedSystemSubject): ObservedSystemSubject {
-  const nonDocumentEvidence = candidate.evidence.filter((ref) => !/\.(md|mdx|txt|rst)$/i.test(ref));
-  return {
-    ...candidate,
-    evidence: nonDocumentEvidence.length > 0 ? nonDocumentEvidence : candidate.evidence,
-    evidenceKinds: candidate.evidenceKinds.filter((kind) => !kind.startsWith("document")),
-  };
-}
-
-function candidateKeyVariants(key: string): string[] {
-  const variants = [canonicalCandidateKey(key), key];
-  if (key.endsWith("ies") && key.length > 4) {
-    variants.push(`${key.slice(0, -3)}y`);
-  }
-  if (key.endsWith("s") && key.length > 3 && !/(ss|us|is)$/.test(key)) {
-    variants.push(key.slice(0, -1));
-  } else {
-    variants.push(`${key}s`);
-  }
-  return unique(variants);
-}
-
-function canonicalCandidateKey(key: string): string {
-  if (key.includes("-")) {
-    return key;
-  }
-  if (key.endsWith("ies") && key.length > 4) {
-    return `${key.slice(0, -3)}y`;
-  }
-  if (key.endsWith("s") && key.length > 3 && !/(ss|us|is)$/.test(key)) {
-    return key.slice(0, -1);
-  }
-  return key;
-}
-
-function observedSystemSubjects(
-  inventory: CodeInventory,
-  existingTerms: string[],
-  existingSystemDocumentKeys: string[],
-): ObservedSystemSubject[] {
-  const byKey = new Map<string, ObservedSystemSubject & { score: number }>();
-  const existing = new Set([...existingTerms, ...existingSystemDocumentKeys.map(normalizeSearchText)]);
-
-  function addCandidate(title: string | undefined, evidence: string, options: {
-    symbol?: string;
-    kind: ObservedSystemSubject["kind"];
-    layer: ObservedSystemSubject["layer"];
-    score: number;
-    evidenceKind: string;
-    means: string;
-  }): void {
-    if (!title) {
-      return;
-    }
-    const rawKey = slugify(title);
-    const key = candidateKeyVariants(rawKey).find((variant) => byKey.has(variant)) ?? canonicalCandidateKey(rawKey);
-    const candidateTitle = key !== rawKey ? subjectTitleFromIdentifier(key) ?? title : title;
-    if (existing.has(normalizeSearchText(title)) || candidateKeyVariants(rawKey).some((variant) => existing.has(normalizeSearchText(variant)))) {
-      return;
-    }
-    const current = byKey.get(key);
-    if (current) {
-      current.score += options.score;
-      if (candidateTitle.length < current.title.length) {
-        current.title = candidateTitle;
-      }
-      current.evidence = unique([...current.evidence, evidence]).slice(0, 6);
-      current.symbols = unique([...current.symbols, ...(options.symbol ? [options.symbol] : [])]).slice(0, 8);
-      current.evidenceKinds = unique([...current.evidenceKinds, options.evidenceKind]).slice(0, 6);
-      return;
-    }
-
-    byKey.set(key, {
-      key,
-      title: candidateTitle,
-      aliases: [],
-      evidence: [evidence],
-      symbols: options.symbol ? [options.symbol] : [],
-      kind: options.kind,
-      layer: options.layer,
-      evidenceKinds: [options.evidenceKind],
-      means: options.means,
-      score: options.score,
-    });
-  }
-
-  addPackageTerms(inventory.root, addCandidate);
-  addRepositoryUnderstandingCandidates(inventory.understanding, addCandidate);
-
-  return [...byKey.values()]
-    .map(({ score, ...candidate }) => ({
-      ...removeDocumentOnlyEvidence(candidate),
-      score,
-    }))
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.title.localeCompare(right.title),
-    )
-    .slice(0, maxDraftSubjects)
-    .map(({ score: _score, ...candidate }) => candidate);
-}
-
 function cleanReferenceTarget(value: string): string {
   return value
     .replace(/^[A-Za-z ]+:\s*/, "")
@@ -1235,76 +1053,6 @@ function uncoveredExamples(rootDir: string, inventory: CodeInventory): CheckFind
     }));
 }
 
-function documentKindForCandidate(candidate: ObservedSystemSubject): SystemDocumentDraft["kind"] {
-  if (candidate.evidenceKinds.includes("entrypoint-flow")) {
-    return "Capability";
-  }
-  if (candidate.kind === "interface") {
-    return "Shared Structure";
-  }
-  return "Responsibility Area";
-}
-
-function termId(candidate: Pick<ObservedSystemSubject, "key">): string {
-  return `TERM:${candidate.key}`;
-}
-
-function docId(candidate: Pick<ObservedSystemSubject, "key">): string {
-  return `DOC:${candidate.key}`;
-}
-
-function statementId(candidate: Pick<ObservedSystemSubject, "key">, suffix: string): string {
-  return `STMT:${candidate.key}.${suffix}`;
-}
-
-function sourceReferences(refs: string[]): string[] {
-  return unique(refs).map((ref) => {
-    if (ref.startsWith("package.json")) {
-      return `Package: ${ref}`;
-    }
-    return `Source: ${ref}`;
-  });
-}
-
-function systemDocumentSummary(candidate: ObservedSystemSubject): string {
-  return candidate.means;
-}
-
-function systemStatementDrafts(candidate: ObservedSystemSubject, summary: string): SystemStatementDraft[] {
-  const terms = [termId(candidate)];
-  const references = sourceReferences(candidate.evidence);
-  return [
-    {
-      id: statementId(candidate, "summary"),
-      title: `${candidate.title} Summary`,
-      status: "proposed",
-      statement: summary,
-      terms,
-      references,
-      notes: ["Generated from repository evidence by krow check."],
-    },
-  ];
-}
-
-function systemDocumentDraft(candidate: ObservedSystemSubject): SystemDocumentDraft {
-  const summary = systemDocumentSummary(candidate);
-  return {
-    id: docId(candidate),
-    title: candidate.title,
-    kind: documentKindForCandidate(candidate),
-    status: "proposed",
-    summary,
-    terms: [termId(candidate)],
-    references: sourceReferences(candidate.evidence),
-    statements: systemStatementDrafts(candidate, summary),
-    sourceSubjectKey: candidate.key,
-  };
-}
-
-function systemDocumentDrafts(subjects: ObservedSystemSubject[]): SystemDocumentDraft[] {
-  return subjects.map(systemDocumentDraft);
-}
-
 function systemDocumentMarkdown(document: SystemDocumentDraft, status: "proposed" | "approved"): string {
   const documentStatus = status === "approved" ? "Approved" : "Proposed";
   return [
@@ -1353,7 +1101,7 @@ function systemDocumentDecisionPrompts(proposal: CheckProposal): DecisionPrompt[
     kind: "approval" as const,
     target: {
       kind: "system-document" as const,
-      ref: `${checkRunDirPath(proposal.checkId)}/draft.json#${document.id}`,
+      ref: `${checkRunDirPath(proposal.checkId)}/proposals.json#${document.id}`,
       status: "proposed",
     },
     question: `Approve ${document.id} as a System Document draft?`,
@@ -1375,8 +1123,86 @@ function systemDocumentDecisionPrompts(proposal: CheckProposal): DecisionPrompt[
   }));
 }
 
-function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observedRef" | "draftRef" | "decisionsRef">, refs: {
+function readingPlanMarkdownTemplate(input: {
+  checkId: string;
+  evidenceRef: string;
+  existingSystemMapRef: string;
+}): string {
+  return [
+    "# Reading Plan",
+    "",
+    `Check ID: ${input.checkId}`,
+    `Evidence: ${input.evidenceRef}`,
+    `Current System Map: ${input.existingSystemMapRef}`,
+    "",
+    "Status: Draft",
+    "",
+    "## Repository Orientation",
+    "",
+    "## Read In This Order",
+    "",
+    "## Reading Boundary",
+    "",
+    "## Refresh Conditions",
+    "",
+  ].join("\n");
+}
+
+function understandingMarkdownTemplate(input: {
+  checkId: string;
+  evidenceRef: string;
+  readingPlanRef: string;
+}): string {
+  return [
+    "# Check Understanding",
+    "",
+    `Check ID: ${input.checkId}`,
+    `Evidence: ${input.evidenceRef}`,
+    `Reading Plan: ${input.readingPlanRef}`,
+    "",
+    "Status: Draft",
+    "",
+    "## What Was Read",
+    "",
+    "## System Understanding",
+    "",
+    "## Proposed Glossary Terms",
+    "",
+    "## Proposed System Documents",
+    "",
+    "## Gaps",
+    "",
+  ].join("\n");
+}
+
+function emptyQuestionsJson(checkId: string): string {
+  return `${JSON.stringify({ checkId, questions: [] }, null, 2)}\n`;
+}
+
+function emptyProposal(input: {
+  checkId: string;
+  generatedAt: string;
+  about?: string;
+  understanding: RepositoryUnderstanding;
+}): CheckProposal {
+  return {
+    checkId: input.checkId,
+    generatedAt: input.generatedAt,
+    about: input.about,
+    stage: "agent-draft-required",
+    understanding: input.understanding,
+    subjects: [],
+    systemDocuments: [],
+  };
+}
+
+function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observedRef" | "evidenceRef" | "readingPlanRef" | "understandingRef" | "proposalsRef" | "questionsRef" | "draftRef" | "decisionsRef">, refs: {
   observedRef: string;
+  evidenceRef: string;
+  readingPlanRef: string;
+  understandingRef: string;
+  proposalsRef: string;
+  questionsRef: string;
   draftRef: string;
   decisionsRef: string;
   proposal: CheckProposal;
@@ -1409,8 +1235,21 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
     "",
     ...systemDocumentDraftList(refs.proposal.systemDocuments),
     "",
+    "## Agent Work",
+    "",
+    "- Read the evidence bundle.",
+    "- Fill the reading plan with the files or areas actually worth reading.",
+    "- Trace code according to that plan.",
+    "- Write understanding and proposals only from evidence that was read.",
+    "- Run `check-decisions` after proposals are ready for approval.",
+    "",
     "## Files",
     "",
+    `- Evidence: ${refs.evidenceRef}`,
+    `- Reading Plan: ${refs.readingPlanRef}`,
+    `- Understanding: ${refs.understandingRef}`,
+    `- Proposals: ${refs.proposalsRef}`,
+    `- Questions: ${refs.questionsRef}`,
     `- Observed: ${refs.observedRef}`,
     `- Draft: ${refs.draftRef}`,
     `- Decisions: ${refs.decisionsRef}`,
@@ -1425,7 +1264,7 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
     "",
     result.decisions.length > 0
       ? "Use the `$check` skill to ask the bundled questions and apply only approved decisions."
-      : "No approval questions were generated.",
+      : "Fill the reading plan, understanding, proposals, and questions artifacts. Then run `check-decisions` for approval prompts.",
     "",
   ].join("\n");
 }
@@ -1436,6 +1275,7 @@ function repositoryUnderstandingMarkdown(understanding: RepositoryUnderstanding)
     `- Product purpose: ${understanding.productPurpose ?? "(unknown)"}`,
     `- Repository kind: ${understanding.repositoryKind.join(", ") || "(unknown)"}`,
     `- Entrypoints: ${understanding.entrypoints.join(", ") || "(none detected)"}`,
+    `- Source entrypoint candidates: ${understanding.sourceEntrypointCandidates.join(", ") || "(none detected)"}`,
     `- Source roots: ${understanding.sourceRoots.join(", ") || "(none detected)"}`,
     `- Test roots: ${understanding.testRoots.join(", ") || "(none detected)"}`,
     "",
@@ -1443,6 +1283,12 @@ function repositoryUnderstandingMarkdown(understanding: RepositoryUnderstanding)
     "",
     ...(understanding.flows.length > 0
       ? understanding.flows.map((flow) => `- ${flow.title}: ${flow.files.join(" -> ")}`)
+      : ["- none detected"]),
+    "",
+    "### Source Flow Candidates",
+    "",
+    ...(understanding.sourceFlowCandidates.length > 0
+      ? understanding.sourceFlowCandidates.map((flow) => `- ${flow.title}: ${flow.files.join(" -> ")}`)
       : ["- none detected"]),
     "",
     "### Reading Order",
@@ -1498,6 +1344,11 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
   const checkId = `check-${nowCompact()}`;
   const checkDir = checkRunDirPath(checkId);
   const observedRef = `${checkDir}/observed.json`;
+  const evidenceRef = `${checkDir}/evidence.json`;
+  const readingPlanRef = `${checkDir}/reading-plan.md`;
+  const understandingRef = `${checkDir}/understanding.md`;
+  const proposalsRef = `${checkDir}/proposals.json`;
+  const questionsRef = `${checkDir}/questions.json`;
   const draftRef = `${checkDir}/draft.json`;
   const decisionsRef = `${checkDir}/decisions.json`;
   const reportRef = `${checkDir}/result.md`;
@@ -1509,24 +1360,41 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
 
   const existingSystemDocuments = loadSystemDocuments(rootDir);
   const glossary = loadGlossaryText(rootDir);
-  const observedSubjects = observedSystemSubjects(
-    inventory,
-    glossaryTerms(glossary),
-    existingSystemDocuments.flatMap((systemDocument) => [systemDocument.key, systemDocument.title]),
-  );
-  const draftSystemDocuments = systemDocumentDrafts(observedSubjects);
-  const proposal: CheckProposal = {
+  const generatedAt = nowIso();
+  const evidence: CheckEvidenceBundle = {
     checkId,
-    generatedAt: nowIso(),
+    generatedAt,
+    about: input.about,
+    inventory,
+    existing: {
+      glossaryRef: GLOSSARY_FILE,
+      systemMapRef: SYSTEM_MAP_FILE,
+      systemDocumentRefs: existingSystemDocuments.map((systemDocument) => systemDocument.ref),
+    },
+  };
+  const proposal = emptyProposal({
+    checkId,
+    generatedAt,
     about: input.about,
     understanding: inventory.understanding,
-    subjects: observedSubjects,
-    systemDocuments: draftSystemDocuments,
-  };
+  });
 
+  writeKrowFile(evidenceRef, `${JSON.stringify(evidence, null, 2)}\n`, rootDir);
+  writeKrowFile(readingPlanRef, readingPlanMarkdownTemplate({
+    checkId,
+    evidenceRef,
+    existingSystemMapRef: SYSTEM_MAP_FILE,
+  }), rootDir);
+  writeKrowFile(understandingRef, understandingMarkdownTemplate({
+    checkId,
+    evidenceRef,
+    readingPlanRef,
+  }), rootDir);
+  writeKrowFile(proposalsRef, `${JSON.stringify(proposal, null, 2)}\n`, rootDir);
+  writeKrowFile(questionsRef, emptyQuestionsJson(checkId), rootDir);
   writeKrowFile(draftRef, `${JSON.stringify(proposal, null, 2)}\n`, rootDir);
 
-  const decisions = systemDocumentDecisionPrompts(proposal);
+  const decisions: DecisionPrompt[] = [];
   writeKrowFile(decisionsRef, `${JSON.stringify(decisions, null, 2)}\n`, rootDir);
 
   const findings: CheckFinding[] = [
@@ -1542,16 +1410,10 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
       message: "No System Documents were found.",
       refs: [SYSTEM_DOCS_DIR],
     }]),
-    ...draftSystemDocuments.map((document) => ({
-      kind: "missing-system-document" as const,
-      severity: "info" as const,
-      message: `Draft System Document found from repository evidence: ${document.title} (${document.id})`,
-      refs: document.references,
-    })),
     ...brokenReferences(rootDir, existingSystemDocuments),
     ...uncoveredExamples(rootDir, inventory),
   ];
-  const status: ProjectCheckResult["status"] = findings.length > 0 || decisions.length > 0 ? "needs-review" : "clean";
+  const status: ProjectCheckResult["status"] = findings.length > 0 ? "needs-review" : "clean";
   const resultWithoutRefs = {
     checkId,
     status,
@@ -1559,20 +1421,35 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
     decisions,
     summary: {
       scannedFileCount: inventory.fileCount,
-      draftSystemDocumentCount: draftSystemDocuments.length,
+      draftSystemDocumentCount: proposal.systemDocuments.length,
       approvalQuestionCount: decisions.length,
-      observedSubjectCount: observedSubjects.length,
+      observedSubjectCount: proposal.subjects.length,
       findingCount: findings.length,
       writesOutsideKrow: false as const,
     },
   };
 
-  writeKrowFile(reportRef, reportMarkdown(resultWithoutRefs, { observedRef, draftRef, decisionsRef, proposal }), rootDir);
+  writeKrowFile(reportRef, reportMarkdown(resultWithoutRefs, {
+    observedRef,
+    evidenceRef,
+    readingPlanRef,
+    understandingRef,
+    proposalsRef,
+    questionsRef,
+    draftRef,
+    decisionsRef,
+    proposal,
+  }), rootDir);
 
   return {
     ...resultWithoutRefs,
     reportRef,
     observedRef,
+    evidenceRef,
+    readingPlanRef,
+    understandingRef,
+    proposalsRef,
+    questionsRef,
     draftRef,
     decisionsRef,
   };
@@ -1587,12 +1464,43 @@ function normalizeCheckId(value: string): string {
 }
 
 function loadProposal(checkId: string, rootDir: string): CheckProposal {
-  const ref = `${checkRunDirPath(checkId)}/draft.json`;
-  const filePath = absolutePath(ref, rootDir);
+  const primaryRef = `${checkRunDirPath(checkId)}/proposals.json`;
+  const legacyRef = `${checkRunDirPath(checkId)}/draft.json`;
+  const primaryPath = absolutePath(primaryRef, rootDir);
+  const legacyPath = absolutePath(legacyRef, rootDir);
+  const filePath = existsSync(primaryPath) ? primaryPath : legacyPath;
   if (!existsSync(filePath)) {
-    throw new Error(`missing check proposal: ${ref}`);
+    throw new Error(`missing check proposal: ${primaryRef}`);
   }
   return JSON.parse(readFileSync(filePath, "utf8")) as CheckProposal;
+}
+
+export function buildProjectCheckDecisions(input: {
+  checkId: string;
+  rootDir?: string;
+}): ProjectCheckDecisionResult {
+  const rootDir = path.resolve(input.rootDir ?? process.cwd());
+  const checkId = normalizeCheckId(input.checkId);
+  const proposalsRef = `${checkRunDirPath(checkId)}/proposals.json`;
+  const decisionsRef = `${checkRunDirPath(checkId)}/decisions.json`;
+  const proposal = loadProposal(checkId, rootDir);
+
+  if (proposal.stage !== "ready-for-approval") {
+    throw new Error(`${proposalsRef} must set stage to "ready-for-approval" before check-decisions`);
+  }
+  if (!Array.isArray(proposal.systemDocuments) || proposal.systemDocuments.length === 0) {
+    throw new Error(`${proposalsRef} must contain at least one System Document proposal before check-decisions`);
+  }
+
+  const decisions = systemDocumentDecisionPrompts(proposal);
+  writeKrowFile(decisionsRef, `${JSON.stringify(decisions, null, 2)}\n`, rootDir);
+
+  return {
+    checkId,
+    proposalsRef,
+    decisionsRef,
+    decisions,
+  };
 }
 
 function systemDocumentFromDecision(document: SystemDocumentDraft, answer: DecisionAnswer): SystemDocumentDraft | undefined {

@@ -145,6 +145,7 @@ Agents do not choose the global workflow order. The runner emits the current ste
 ```bash
 krow init [--agents <all|none|codex|claude|gemini>] [--root <dir>] [--force]
 krow check [description] [--about <text>] [--scope <path>] [--root <dir>]
+krow check-decisions <checkId> [--root <dir>]
 krow check-apply <checkId> <json|path|-> [--root <dir>]
 krow work <request> [--root <dir>] [--work-id <id>]
 krow documents [message] [--root <dir>]

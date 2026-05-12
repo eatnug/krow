@@ -47,6 +47,7 @@ User owns meaning approval.
   understanding.md
   proposals.json
   questions.json
+  decisions.json
   result.md
 ```
 
@@ -270,7 +271,7 @@ gap section in result.md
 
 ### gate-user
 
-Owner: User, prompted by AI.
+Owner: User, prompted by AI and recorded by Code.
 
 Input:
 
@@ -283,12 +284,14 @@ proposal context
 Operation:
 
 ```text
+run check-decisions after proposals are ready
 approve, revise, reject, or answer meaning questions
 ```
 
 Output:
 
 ```text
+.krow/check/<check-id>/decisions.json
 decision answers stored under the check run
 ```
 
