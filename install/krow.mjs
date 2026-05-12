@@ -84,9 +84,9 @@ The runner owns step order, dependency order, and readiness. The agent does the 
 
 const SHARED_CHECK_LOOP = `## Startup
 
-Treat the argument as a user seed, not as a path and not as approved project truth.
+Treat the argument as user-provided context for this check.
 
-Use the seed to understand which information scope matters: project purpose, entrypoints, source roots, tests, and generated/support areas.
+Derive proposed names, terms, and System Documents only from user-provided context, repository evidence, or existing project documents. When a readable name is missing, synthesize it from the sourced material that created the proposal.
 
 Run with the user seed in place of \`<user seed>\`:
 \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
@@ -95,7 +95,7 @@ Parse the JSON response and read the report refs.
 
 Each check step is input -> operation -> output.
 
-Use the signal refs and user seed as available input. Decide what context is needed for the current step output. If context is missing, gather it from the repository when possible. Ask the user when the missing context is a meaning, scope, ownership, approval, or external decision. Only approved structured changes become Glossary or System Documents.
+Use the signal refs, user seed, current \`.krow\` documents, and repository evidence as available input. Decide what context is needed for the current step output. If context is missing, gather it from the repository when possible. Ask the user when the missing context is a meaning, scope, ownership, approval, or external decision. Only approved structured changes become Glossary or System Documents.
 
 If decisions are present, present the full decision bundle to the user in one message. Apply only explicit approve, revise, or reject decisions:
 
@@ -153,9 +153,9 @@ ${SHARED_WORK_LOOP}
 
 const CLAUDE_CHECK_COMMAND = `---
 description: Check repository evidence against krow project understanding.
-argument-hint: "[user seed]"
+argument-hint: "[seed]"
 arguments:
-  - hint
+  - seed
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
@@ -163,7 +163,7 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # check
 
-Use \`$hint\` as the user seed.
+Use \`$seed\` as the user seed.
 
 ${SHARED_CHECK_LOOP}
 `;

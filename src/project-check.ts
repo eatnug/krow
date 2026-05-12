@@ -12,7 +12,6 @@ import { scanKrowDocuments } from "./document-contracts.js";
 import type { DecisionAnswer, DecisionPrompt } from "./types.js";
 
 type CodeFileKind = "source" | "test" | "doc" | "config";
-type EvidenceTier = "strong" | "artifact" | "weak";
 type FileRole = "runtime" | "artifact" | "support" | "document" | "other";
 
 interface RepositoryFlow {
@@ -71,7 +70,6 @@ interface ObservedSystemSubject {
   symbols: string[];
   kind: "subject" | "interface" | "module";
   layer: "product" | "system";
-  evidenceTier: EvidenceTier;
   evidenceKinds: string[];
   means: string;
 }
@@ -120,9 +118,7 @@ export interface ProjectCheckResult {
     scannedFileCount: number;
     draftSystemDocumentCount: number;
     approvalQuestionCount: number;
-    strongSubjectCount: number;
-    artifactSubjectCount: number;
-    weakSubjectCount: number;
+    observedSubjectCount: number;
     findingCount: number;
     writesOutsideKrow: false;
   };
@@ -310,8 +306,12 @@ function subjectTitleFromIdentifier(value: string): string | undefined {
   return titleFromWords(words);
 }
 
-function isStableSystemSymbol(symbol: string): boolean {
-  return /^[A-Z][A-Za-z0-9_$]*$/.test(symbol);
+function titleFromIdentifierLiteral(value: string): string | undefined {
+  const words = splitIdentifier(value).filter((word) => word.length > 0 && !/^\d+$/.test(word));
+  if (words.length === 0 || words.length > 6) {
+    return undefined;
+  }
+  return titleFromWords(words);
 }
 
 function shouldReadFile(filePath: string): boolean {
@@ -530,15 +530,6 @@ function resolveRepoFile(rootDir: string, candidate: string): string | undefined
   return undefined;
 }
 
-function sourceFallbackForEntrypoint(rootDir: string, relativePath: string): string | undefined {
-  if (!relativePath.startsWith("dist/")) {
-    return undefined;
-  }
-  const withoutDist = relativePath.replace(/^dist\//, "");
-  const withoutExtension = withoutDist.replace(/\.[A-Za-z0-9]+$/, "");
-  return resolveRepoFile(rootDir, path.posix.join("src", withoutExtension));
-}
-
 function packageEntrypoints(rootDir: string): Set<string> {
   const pkg = packageJson(rootDir);
   const entrypoints = new Set<string>();
@@ -565,12 +556,6 @@ function packageEntrypoints(rootDir: string): Set<string> {
   collectExportTargets(pkg.exports, candidates);
 
   for (const candidate of candidates) {
-    const stripped = candidate.replace(/^\.\//, "");
-    const fallback = sourceFallbackForEntrypoint(rootDir, stripped);
-    if (fallback) {
-      entrypoints.add(fallback);
-      continue;
-    }
     const resolved = resolveRepoFile(rootDir, candidate);
     if (resolved) {
       entrypoints.add(resolved);
@@ -723,29 +708,56 @@ function extractFunctionBody(content: string, functionName: string): string {
   return "";
 }
 
-function commandCaseBlocks(content: string): Array<{ command: string; body: string }> {
+function commandCaseBlocks(content: string): Array<{ command: string; body: string; handler?: string }> {
   const switchMatch = content.match(/switch\s*\(\s*command\s*\)\s*{([\s\S]*?)\n\s*default\s*:/);
   const switchBody = switchMatch?.[1];
   if (!switchBody) {
     return [];
   }
-  const blocks: Array<{ command: string; body: string }> = [];
+  const blocks: Array<{ command: string; body: string; handler?: string }> = [];
   const pattern = /\bcase\s+["']([^"']+)["']\s*:\s*([\s\S]*?)(?=\n\s*case\s+["']|$)/g;
   for (const match of switchBody.matchAll(pattern)) {
     if (match[1]) {
-      blocks.push({ command: match[1], body: match[2] ?? "" });
+      const body = match[2] ?? "";
+      blocks.push({ command: match[1], body, handler: firstFunctionCall(body) });
     }
   }
   return blocks;
 }
 
-function titleFromCommand(command: string): string {
-  return titleFromWords(command.split("-").filter(Boolean));
+function commandIfBlocks(content: string): Array<{ command: string; body: string; handler?: string }> {
+  const blocks: Array<{ command: string; body: string; handler?: string }> = [];
+  const pattern = /if\s*\(([^)]*\bcommand\s*===\s*["'][^"']+["'][^)]*)\)\s*return\s+([^;\n]+);/g;
+  for (const match of content.matchAll(pattern)) {
+    const condition = match[1] ?? "";
+    const body = match[2] ?? "";
+    const commands = [...condition.matchAll(/\bcommand\s*===\s*["']([^"']+)["']/g)]
+      .map((item) => item[1])
+      .filter((command): command is string => Boolean(command) && !command.startsWith("-"));
+    const handler = firstFunctionCall(body);
+    for (const command of commands) {
+      blocks.push({ command, body, handler });
+    }
+  }
+  return blocks;
 }
 
-function titleFromActionSymbol(symbol: string): string | undefined {
-  const title = subjectTitleFromIdentifier(symbol);
-  return title?.replace(/^(Apply|Build|Create|Derive|Find|Ground|Handle|Load|Read|Run|Save|Scan|Start|Stop|Submit|Update|Validate|Write)\s+/, "");
+function commandDispatchBlocks(content: string): Array<{ command: string; body: string; handler?: string }> {
+  const byCommand = new Map<string, { command: string; body: string; handler?: string }>();
+  for (const block of [...commandCaseBlocks(content), ...commandIfBlocks(content)]) {
+    if (!byCommand.has(block.command)) {
+      byCommand.set(block.command, block);
+    }
+  }
+  return [...byCommand.values()];
+}
+
+function firstFunctionCall(body: string): string | undefined {
+  return body.match(/\b([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+}
+
+function titleFromCommand(command: string): string {
+  return titleFromWords(command.split("-").filter(Boolean));
 }
 
 function commandFlows(rootDir: string, entrypoint: string): RepositoryFlow[] {
@@ -757,11 +769,10 @@ function commandFlows(rootDir: string, entrypoint: string): RepositoryFlow[] {
   const imports = namedImportTargets(rootDir, entrypoint, content);
   const flows: RepositoryFlow[] = [];
 
-  for (const block of commandCaseBlocks(content)) {
-    const handler = block.body.match(/\b(handle[A-Z][A-Za-z0-9_]*)\s*\(/)?.[1];
+  for (const block of commandDispatchBlocks(content)) {
+    const handler = block.handler;
     const handlerBody = handler ? extractFunctionBody(content, handler) : block.body;
     const files = new Set<string>([entrypoint]);
-    const titleHits: Array<{ index: number; title: string }> = [];
 
     for (const [symbol, ref] of imports.entries()) {
       const symbolIndex = handlerBody.indexOf(symbol);
@@ -771,31 +782,26 @@ function commandFlows(rootDir: string, entrypoint: string): RepositoryFlow[] {
         continue;
       }
       files.add(ref);
-      const title = titleFromActionSymbol(symbol);
-      if (title) {
-        titleHits.push({ index, title });
-      }
     }
 
     if (/delegateInstaller\s*\(/.test(block.body) || /delegateInstaller\s*\(/.test(handlerBody)) {
       const installRef = resolveRepoFile(rootDir, "install/krow.mjs");
       if (installRef) {
         files.add(installRef);
-        titleHits.push({ index: 0, title: `${titleFromCommand(block.command)} Command` });
       }
     }
 
-    if (files.size <= 1) {
+    if (files.size <= 1 && !handler) {
       continue;
     }
 
-    const title = titleHits.sort((left, right) => left.index - right.index)[0]?.title ?? `${titleFromCommand(block.command)} Command`;
+    const title = `${titleFromCommand(block.command)} Command`;
     flows.push({
       id: slugify(`${block.command}-${title}`),
       title,
       entrypoint,
       files: [...files],
-      summary: `The ${block.command} command starts at ${entrypoint} and reaches ${[...files].slice(1).join(", ")}.`,
+      summary: `${title} is dispatched by ${entrypoint}.`,
     });
   }
 
@@ -825,7 +831,7 @@ function buildRepositoryUnderstanding(
     notes.push("No package or export entrypoint was detected; runtime flow candidates are limited.");
   }
   if (uniqueFlows.length === 0) {
-    notes.push("No command or route flow was detected from the entrypoint; candidates fall back to runtime-reachable code.");
+    notes.push("No command or route flow was detected from the entrypoint.");
   }
 
   return {
@@ -1010,7 +1016,6 @@ function addPackageTerms(
     kind: ObservedSystemSubject["kind"];
     layer: ObservedSystemSubject["layer"];
     score: number;
-    tier: EvidenceTier;
     evidenceKind: string;
     means: string;
     symbol?: string;
@@ -1022,66 +1027,25 @@ function addPackageTerms(
   }
   const name = typeof pkg.name === "string" ? pkg.name : undefined;
   if (name) {
-    addCandidate(subjectTitleFromIdentifier(name), "package.json:name", {
+    addCandidate(titleFromIdentifierLiteral(name), "package.json:name", {
       kind: "subject",
       layer: "product",
       score: 7,
-      tier: "strong",
       evidenceKind: "package-name",
-      means: "Project-facing package or product name evidenced by package.json. Confirm the exact product boundary before approving it into the Glossary/System Model.",
+      means: `package.json declares ${name} as the package name.`,
     });
   }
   if (pkg.bin && typeof pkg.bin === "object") {
     for (const key of Object.keys(pkg.bin as Record<string, unknown>)) {
-      addCandidate(subjectTitleFromIdentifier(key), "package.json:bin", {
+      addCandidate(titleFromIdentifierLiteral(key), "package.json:bin", {
         kind: "interface",
         layer: "product",
-      score: 5,
-      tier: "strong",
-      evidenceKind: "package-bin",
-      means: "User-facing command evidenced by package.json. Confirm whether it belongs in the Glossary/System Model before approving it.",
+        score: 5,
+        evidenceKind: "package-bin",
+        means: `package.json declares ${key} as a command.`,
       });
     }
   }
-}
-
-function inventoryHas(inventory: CodeInventory, ref: string): boolean {
-  return inventory.files.some((file) => file.path === ref);
-}
-
-function existingInventoryRefs(inventory: CodeInventory, refs: string[]): string[] {
-  return refs.filter((ref) => inventoryHas(inventory, ref));
-}
-
-function addCandidateWithEvidence(
-  title: string,
-  evidence: string[],
-  addCandidate: (title: string | undefined, evidence: string, options: {
-    kind: ObservedSystemSubject["kind"];
-    layer: ObservedSystemSubject["layer"];
-    score: number;
-    tier: EvidenceTier;
-    evidenceKind: string;
-    means: string;
-    symbol?: string;
-  }) => void,
-  options: {
-    kind: ObservedSystemSubject["kind"];
-    score: number;
-    evidenceKind: string;
-    means: string;
-  },
-): void {
-  evidence.forEach((ref, index) => {
-    addCandidate(title, ref, {
-      kind: options.kind,
-      layer: "product",
-      score: index === 0 ? options.score : Math.max(1, options.score * 0.2),
-      tier: "strong",
-      evidenceKind: options.evidenceKind,
-      means: options.means,
-    });
-  });
 }
 
 function addRepositoryUnderstandingCandidates(
@@ -1090,72 +1054,22 @@ function addRepositoryUnderstandingCandidates(
     kind: ObservedSystemSubject["kind"];
     layer: ObservedSystemSubject["layer"];
     score: number;
-    tier: EvidenceTier;
     evidenceKind: string;
     means: string;
     symbol?: string;
   }) => void,
 ): void {
-  if (understanding.entrypoints.length > 0 && understanding.repositoryKind.includes("CLI package")) {
-    for (const ref of ["package.json", ...understanding.entrypoints]) {
-      addCandidate("CLI Surface", ref, {
-        kind: "interface",
-        layer: "product",
-        score: ref === "package.json" ? 7 : 3,
-        tier: "strong",
-        evidenceKind: "entrypoint-flow",
-        means: "The CLI Surface is the user-facing command entrypoint and routes commands into repository runtime flows.",
-      });
-    }
-  }
-
-  const nonGlossaryFlowTitles = new Set([
-    "Decision Answers",
-    "Next Signal",
-    "Phase",
-    "Route",
-    "Status",
-    "Workflow",
-    "Workflow State",
-    "Project Check Decisions",
-    "Remove Command",
-  ]);
   for (const flow of understanding.flows) {
-    if (nonGlossaryFlowTitles.has(flow.title)) {
-      continue;
-    }
     for (const [index, ref] of flow.files.entries()) {
       addCandidate(flow.title, ref, {
         kind: "module",
         layer: "product",
         score: index === 0 ? 7 : 4,
-        tier: "strong",
         evidenceKind: "entrypoint-flow",
         means: flow.summary,
       });
     }
   }
-}
-
-function groundedCandidate(candidate: ObservedSystemSubject): ObservedSystemSubject {
-  if (candidate.evidenceTier !== "strong") {
-    return candidate;
-  }
-  const strongEvidenceKinds = new Set([
-    "entrypoint-flow",
-    "runtime-file",
-    "runtime-symbol",
-    "package-name",
-    "package-bin",
-  ]);
-  if (candidate.evidenceKinds.some((kind) => strongEvidenceKinds.has(kind))) {
-    return candidate;
-  }
-  return {
-    ...candidate,
-    evidenceTier: "weak",
-    means: `${candidate.means} This candidate needs entrypoint, package, or runtime evidence before approval.`,
-  };
 }
 
 function removeDocumentOnlyEvidence(candidate: ObservedSystemSubject): ObservedSystemSubject {
@@ -1206,7 +1120,6 @@ function observedSystemSubjects(
     kind: ObservedSystemSubject["kind"];
     layer: ObservedSystemSubject["layer"];
     score: number;
-    tier: EvidenceTier;
     evidenceKind: string;
     means: string;
   }): void {
@@ -1228,10 +1141,6 @@ function observedSystemSubjects(
       current.evidence = unique([...current.evidence, evidence]).slice(0, 6);
       current.symbols = unique([...current.symbols, ...(options.symbol ? [options.symbol] : [])]).slice(0, 8);
       current.evidenceKinds = unique([...current.evidenceKinds, options.evidenceKind]).slice(0, 6);
-      if (tierRank(options.tier) < tierRank(current.evidenceTier)) {
-        current.evidenceTier = options.tier;
-        current.means = options.means;
-      }
       return;
     }
 
@@ -1243,7 +1152,6 @@ function observedSystemSubjects(
       symbols: options.symbol ? [options.symbol] : [],
       kind: options.kind,
       layer: options.layer,
-      evidenceTier: options.tier,
       evidenceKinds: [options.evidenceKind],
       means: options.means,
       score: options.score,
@@ -1253,70 +1161,18 @@ function observedSystemSubjects(
   addPackageTerms(inventory.root, addCandidate);
   addRepositoryUnderstandingCandidates(inventory.understanding, addCandidate);
 
-  for (const file of inventory.files) {
-    if (file.kind === "source" && file.role !== "support") {
-      const tier = file.role === "artifact" ? "artifact" : "weak";
-      const layer = "system";
-      const evidenceKind = file.role === "runtime" ? "runtime-file" : file.role === "artifact" ? "artifact-file" : "code-file";
-      const means =
-        tier === "artifact"
-            ? `Artifact-scoped code surface associated with ${file.path}. Treat it as supporting evidence unless the user says this artifact reflects project meaning.`
-            : `Weak code-only candidate associated with ${file.path}. Use it for retrieval context before promoting it into the Glossary/System Model.`;
-      addCandidate(subjectTitleFromIdentifier(path.basename(file.path)), file.path, {
-        kind: "module",
-        layer,
-        score: tier === "artifact" ? 1 : 0.5,
-        tier,
-        evidenceKind,
-        means,
-      });
-    }
-    for (const symbol of file.symbols) {
-      if (!isStableSystemSymbol(symbol) || file.role === "support") {
-        continue;
-      }
-      const tier = file.role === "artifact" ? "artifact" : "weak";
-      const layer = "system";
-      const evidenceKind = file.role === "runtime" ? "runtime-symbol" : file.role === "artifact" ? "artifact-symbol" : "code-symbol";
-      const means =
-        tier === "artifact"
-            ? `Artifact-scoped exported symbol associated with ${file.path}. Keep it as evidence unless the user confirms it reflects project meaning.`
-            : `Weak exported-symbol candidate associated with ${file.path}. Use it for retrieval context before promoting it into the Glossary/System Model.`;
-      addCandidate(subjectTitleFromIdentifier(symbol), file.path, {
-        symbol,
-        kind: "interface",
-        layer,
-        score: tier === "artifact" ? 2 : 0.5,
-        tier,
-        evidenceKind,
-        means,
-      });
-    }
-  }
-
   return [...byKey.values()]
     .map(({ score, ...candidate }) => ({
-      ...removeDocumentOnlyEvidence(groundedCandidate(candidate)),
+      ...removeDocumentOnlyEvidence(candidate),
       score,
     }))
     .sort(
       (left, right) =>
-        tierRank(left.evidenceTier) - tierRank(right.evidenceTier) ||
         right.score - left.score ||
         left.title.localeCompare(right.title),
     )
     .slice(0, maxDraftSubjects)
     .map(({ score: _score, ...candidate }) => candidate);
-}
-
-function tierRank(tier: EvidenceTier): number {
-  if (tier === "strong") {
-    return 0;
-  }
-  if (tier === "artifact") {
-    return 1;
-  }
-  return 2;
 }
 
 function cleanReferenceTarget(value: string): string {
@@ -1380,7 +1236,7 @@ function uncoveredExamples(rootDir: string, inventory: CodeInventory): CheckFind
 }
 
 function documentKindForCandidate(candidate: ObservedSystemSubject): SystemDocumentDraft["kind"] {
-  if (candidate.key === "cli-surface" || candidate.evidenceKinds.includes("entrypoint-flow")) {
+  if (candidate.evidenceKinds.includes("entrypoint-flow")) {
     return "Capability";
   }
   if (candidate.kind === "interface") {
@@ -1411,37 +1267,13 @@ function sourceReferences(refs: string[]): string[] {
 }
 
 function systemDocumentSummary(candidate: ObservedSystemSubject): string {
-  if (candidate.key === "cli-surface") {
-    return "CLI Surface is the command entrypoint that receives local krow commands and routes them into runtime flows.";
-  }
-  if (candidate.key === "krow") {
-    return "Krow is the CLI product exposed by package metadata and installed runtime surfaces.";
-  }
-  if (candidate.key === "project-check") {
-    return "Project Check reads repository evidence and drafts System Documents, System Statements, References, and approval decisions.";
-  }
-  if (candidate.key === "work-documents") {
-    return "Work Documents record a requested change as structured PRD, Spec, Plan, Task, and Review documents.";
-  }
-  if (candidate.key === "krow-documents") {
-    return "Krow Documents reads approved Glossary, System Documents, and Work Docs so agents can retrieve project understanding.";
-  }
-  if (candidate.key === "unit-review-report") {
-    return "Unit Review Report records review findings for a workflow unit using stored task, execution, and verification evidence.";
-  }
-  if (candidate.key === "init-command") {
-    return "Init Command creates the local krow workspace, runtime bootstrap, templates, and selected agent command surfaces.";
-  }
-  if (candidate.evidenceKinds.includes("entrypoint-flow")) {
-    return `${candidate.title} is a capability reached from CLI Surface and grounded by the referenced source files.`;
-  }
-  return `${candidate.title} is a system area grounded by the referenced source files.`;
+  return candidate.means;
 }
 
 function systemStatementDrafts(candidate: ObservedSystemSubject, summary: string): SystemStatementDraft[] {
   const terms = [termId(candidate)];
   const references = sourceReferences(candidate.evidence);
-  const statements: SystemStatementDraft[] = [
+  return [
     {
       id: statementId(candidate, "summary"),
       title: `${candidate.title} Summary`,
@@ -1452,20 +1284,6 @@ function systemStatementDrafts(candidate: ObservedSystemSubject, summary: string
       notes: ["Generated from repository evidence by krow check."],
     },
   ];
-
-  if (candidate.evidenceKinds.includes("entrypoint-flow") && candidate.key !== "cli-surface") {
-    statements.push({
-      id: statementId(candidate, "entrypoint"),
-      title: `${candidate.title} Entrypoint`,
-      status: "proposed",
-      statement: `${candidate.title} is reached through CLI Surface.`,
-      terms: unique([...terms, "TERM:cli-surface"]),
-      references,
-      notes: ["Generated from entrypoint flow evidence."],
-    });
-  }
-
-  return statements;
 }
 
 function systemDocumentDraft(candidate: ObservedSystemSubject): SystemDocumentDraft {
@@ -1484,9 +1302,7 @@ function systemDocumentDraft(candidate: ObservedSystemSubject): SystemDocumentDr
 }
 
 function systemDocumentDrafts(subjects: ObservedSystemSubject[]): SystemDocumentDraft[] {
-  return subjects
-    .filter((subject) => subject.evidenceTier === "strong")
-    .map(systemDocumentDraft);
+  return subjects.map(systemDocumentDraft);
 }
 
 function systemDocumentMarkdown(document: SystemDocumentDraft, status: "proposed" | "approved"): string {
@@ -1698,8 +1514,7 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
     glossaryTerms(glossary),
     existingSystemDocuments.flatMap((systemDocument) => [systemDocument.key, systemDocument.title]),
   );
-  const strongSubjects = observedSubjects.filter((subject) => subject.evidenceTier !== "weak");
-  const draftSystemDocuments = systemDocumentDrafts(strongSubjects);
+  const draftSystemDocuments = systemDocumentDrafts(observedSubjects);
   const proposal: CheckProposal = {
     checkId,
     generatedAt: nowIso(),
@@ -1746,9 +1561,7 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
       scannedFileCount: inventory.fileCount,
       draftSystemDocumentCount: draftSystemDocuments.length,
       approvalQuestionCount: decisions.length,
-      strongSubjectCount: observedSubjects.filter((subject) => subject.evidenceTier === "strong").length,
-      artifactSubjectCount: observedSubjects.filter((subject) => subject.evidenceTier === "artifact").length,
-      weakSubjectCount: observedSubjects.filter((subject) => subject.evidenceTier === "weak").length,
+      observedSubjectCount: observedSubjects.length,
       findingCount: findings.length,
       writesOutsideKrow: false as const,
     },
