@@ -1,130 +1,40 @@
 # krow
 
-`krow` gives a codebase a shared language, describes the software with that language, and makes coding agents work from those documents.
+`krow` lets coding agents build software from repo-local documents: shared language, system description, work plan, code, and tests.
 
-## Basic Flow
+## Use
 
 The npm package is `krow-cli`. The installed command is `krow`.
 
 ```bash
-# bootstrap krow and install all supported agent commands
+# 1. bootstrap krow in a repo
 npx --yes krow-cli@latest init
-
-# choose a smaller surface when needed
-npx --yes krow-cli@latest init --agents codex
-npx --yes krow-cli@latest init --agents none
 ```
 
-For an existing codebase:
+Then open your coding agent and ask for work:
 
 ```text
-$check about: React app. Free and paid subscription states control feature access.
+$work I want to build a habit tracking app.
+$work Add login and paid subscription gating.
+$work Fix the dashboard loading bug.
 ```
 
-For a new project or a new change:
+`init` installs agent commands by default:
 
 ```text
-$work Build the first version of the dashboard.
-$work Free users should see an Upgrade Prompt when Daily Recommendation access is blocked.
-```
-
-Agent surfaces:
-
-- Codex: `$check`, `$work <request>`
-- Claude Code: `/check`, `/work <request>`
-- Gemini CLI: `/check`, `/work <request>`
-
-The agent surface is the normal user entrypoint. The CLI is the deterministic runtime underneath it.
-
-## Files
-
-```text
-.krow/system/glossary.md
-  agreed project words
-
-.krow/system/map.md
-  current software map
-
-.krow/system/docs/*.md
-  current behavior, rules, structures, and responsibilities
-
-.krow/work/<work-id>/
-  PRD, Spec, Plan, Task, and Review docs for a change
-
-.krow/check/<check-id>/
-  observed evidence, drafts, decisions, and check report
-```
-
-## Project Understanding
-
-The core project documents live under `.krow/system`.
-
-```text
-.krow/system/glossary.md
-  Approved vocabulary. Defines what important project words mean.
-
-.krow/system/map.md
-  The current high-level System Model and route into System Documents.
-
-.krow/system/docs/*.md
-  System Documents. Each document describes a current capability, rule, structure, or responsibility area.
-```
-
-A System Document is made of System Statements and References.
-
-```text
-System Statement
-  A current fact about the software, written with Glossary terms.
-
-Reference
-  A typed link from a term, statement, document, Work Doc, or Review to concrete project material.
-```
-
-## Check
-
-`$check` initializes or refreshes krow's understanding of a codebase.
-
-Example:
-
-```text
-$check about: React app. Free and paid subscription states control feature access.
-```
-
-The `about` text is a seed. It guides scope and wording, but it is not treated as project truth. `$check` still grounds drafts in repository evidence.
-
-`$check` reads the repository, finds entrypoints and runtime flows, drafts System Documents and System Statements, and asks for approval before writing durable project understanding.
-
-Check output:
-
-```text
-.krow/check/<check-id>/observed.json
-.krow/check/<check-id>/draft.json
-.krow/check/<check-id>/decisions.json
-.krow/check/<check-id>/result.md
-```
-
-Approval applies selected drafts into:
-
-```text
-.krow/system/glossary.md
-.krow/system/map.md
-.krow/system/docs/*.md
-```
-
-Direct CLI equivalent:
-
-```bash
-krow check --about "React app. Free and paid subscription states control feature access."
-krow check-apply <check-id> <answers.json>
+Codex:       $work, $check
+Claude Code: /work, /check
+Gemini CLI: /work, /check
 ```
 
 ## Work
 
-`$work <request>` starts a change using the current Glossary and System Model.
+`$work <request>` starts a new app, feature, fix, or refactor.
 
 Example:
 
 ```text
+$work I want to build a habit tracking app.
 $work Free users should see an Upgrade Prompt when Daily Recommendation access is blocked.
 ```
 
@@ -148,6 +58,35 @@ Glossary + System Model
   -> Tasks update Code / Tests
   -> Review
   -> proposed Glossary/System Model updates when meaning changed
+```
+
+## Brownfield Check
+
+Use `$check` when krow is added to an existing codebase.
+
+```text
+$check about: React app. Free and paid subscription states control feature access.
+```
+
+It reads the repository, drafts `.krow/system/glossary.md`, `.krow/system/map.md`, and `.krow/system/docs/*.md`, then asks what should be approved.
+
+## What It Creates
+
+```text
+.krow/system/glossary.md
+  agreed project words and meanings
+
+.krow/system/map.md
+  current map of the software
+
+.krow/system/docs/*.md
+  behavior, rules, structures, and responsibilities
+
+.krow/work/<work-id>/
+  PRD, Spec, Plan, Task, and Review for a change
+
+.krow/check/<check-id>/
+  brownfield scan, drafts, decisions, and report
 ```
 
 ## Runtime
