@@ -72,6 +72,8 @@ writeFileSync(
     "  process.stdout.write('smoke');",
     "}",
     "",
+    "export const reviewLanguage = 'The Behavior Record should which open update durable extract policy';",
+    "",
   ].join("\n"),
 );
 writeFileSync(
@@ -100,7 +102,11 @@ for (const relativePath of [
   }
 }
 
-const check = readJson(run(["check", "--root", root, "--about", "Smoke project with story and plugin concepts"]));
+const check = readJson(run(["check", "--root", root, "--about", [
+  "Smoke project with Story and Plugin concepts.",
+  "Behavior and Record are not first-class System Documents.",
+  "Revision words like should, which, open, source, update, durable, extract, and policy are not concept names.",
+].join(" ")]));
 assertExists(check.check.reportRef);
 assertExists(check.check.observedRef);
 assertExists(check.check.draftRef);
@@ -115,6 +121,23 @@ if (!Array.isArray(checkDraft.systemDocuments) || checkDraft.systemDocuments.len
 const draftIds = new Set(checkDraft.systemDocuments.map((document) => document.id));
 if (!draftIds.has("DOC:story") || !draftIds.has("DOC:plugin")) {
   throw new Error("check should promote user-seeded terms with repository evidence into explicit decisions");
+}
+for (const noisyId of [
+  "DOC:behavior",
+  "DOC:record",
+  "DOC:should",
+  "DOC:which",
+  "DOC:open",
+  "DOC:source",
+  "DOC:update",
+  "DOC:durable",
+  "DOC:extract",
+  "DOC:policy",
+  "DOC:the",
+]) {
+  if (draftIds.has(noisyId)) {
+    throw new Error(`check should not promote revision guidance into ${noisyId}`);
+  }
 }
 const unsafeDecision = check.check.decisions[0];
 const unsafeApply = readJson(run(["check-apply", check.check.checkId, JSON.stringify([{

@@ -307,9 +307,12 @@ const seedTermStopWords = new Set([
   "context",
   "current",
   "data",
+  "document",
+  "documents",
   "file",
   "files",
   "first",
+  "first-class",
   "from",
   "into",
   "local",
@@ -321,14 +324,19 @@ const seedTermStopWords = new Set([
   "repo",
   "repository",
   "runtime",
+  "source",
   "store",
   "stores",
   "stored",
   "system",
   "that",
+  "the",
   "this",
   "thought",
+  "term",
+  "terms",
   "turn",
+  "it",
   "user",
   "using",
   "with",
@@ -1150,6 +1158,7 @@ function extractSeedTerms(text?: string): string[] {
   }
 
   const terms: string[] = [];
+  const excluded = new Set<string>();
   const push = (raw: string | undefined): void => {
     if (!raw) {
       return;
@@ -1159,21 +1168,35 @@ function extractSeedTerms(text?: string): string[] {
       terms.push(title);
     }
   };
+  const exclude = (raw: string | undefined): void => {
+    if (!raw) {
+      return;
+    }
+    const title = seedTitleFromPhrase(raw);
+    if (title) {
+      excluded.add(slugify(title));
+    }
+  };
 
   for (const match of text.matchAll(/`([^`\n]{2,80})`/g)) {
     push(match[1]);
   }
 
-  const englishWords = normalizeSearchText(text)
-    .split(" ")
-    .filter((word) => /^[a-z][a-z0-9-]*$/.test(word))
-    .filter((word) => word.length >= 4 && !seedTermStopWords.has(word) && !subjectStopWords.has(word));
-
-  for (const word of englishWords) {
-    push(singularizeWord(word));
+  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
+    const capitalizedTerms = [...sentence.matchAll(/\b(?:[A-Z]{2,}|[A-Z][a-z0-9]+)(?:\s+(?:[A-Z]{2,}|[A-Z][a-z0-9]+))*\b/g)]
+      .map((match) => match[0]);
+    const rejectsDocument = /\bnot\b[^.!?]*(?:first[- ]class|system document|separate document|separate doc)\b/i.test(sentence)
+      || /\b(?:rather than|instead of)\b[^.!?]*\bseparate\b[^.!?]*(?:document|doc)\b/i.test(sentence);
+    for (const term of capitalizedTerms) {
+      if (rejectsDocument) {
+        exclude(term);
+      } else {
+        push(term);
+      }
+    }
   }
 
-  return unique(terms);
+  return unique(terms).filter((term) => !excluded.has(slugify(term)));
 }
 
 function evidencePriority(file: CodeInventoryFile): number {
