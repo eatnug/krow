@@ -101,7 +101,13 @@ If decisions are present, present the full decision bundle to the user in one me
 
 \`${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> <json|path|->\`
 
-\`$check\` writes only inside \`.krow\`.
+During \`$check\`, durable System changes go through the runner only:
+
+- create or refresh proposals with \`${KROW_COMMAND_PLACEHOLDER} check "<user seed>"\`
+- apply approved proposals with \`${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> <json|path|->\`
+- if the user names a missing first-class term or document after review, run a new check with the refined seed so the runner records the proposal, decision, apply result, and audit report
+
+\`$check\` writes only inside \`.krow\`. Treat generated apply reports as runner-owned audit output.
 `;
 
 const CODEX_WORK_SKILL = `---

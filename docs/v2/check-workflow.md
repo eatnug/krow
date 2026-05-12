@@ -89,7 +89,7 @@ Approval drafts are grounded in package metadata, entrypoints, runtime flows, so
 
 When needed context is missing, the agent first tries to obtain it from repository evidence. It asks the user only for meaning, scope, ownership, approval, or external facts that the repository cannot decide.
 
-The user seed guides scope selection, but it is not promoted directly into Glossary or System Documents.
+The user seed guides scope selection, but it is not promoted directly into Glossary or System Documents. Seed terms may become proposal candidates only after they are matched against repository evidence.
 
 ## Observed Understanding v0 Inputs
 
@@ -171,6 +171,8 @@ detect-state
 It should not silently approve project meaning.
 
 Generated scans are draft understanding, not project truth.
+
+Approved System changes are runner-owned. Agents create or refresh proposals with `check` and apply approved decisions with `check-apply`. If review exposes a missing first-class term or document, the next move is a refined check or a new explicit decision so the runner records the proposal, decision, apply result, and audit report.
 
 ## Ambiguity Resolution
 

@@ -61,9 +61,21 @@ writeFileSync(
 writeFileSync(
   path.join(root, "src", "cli.ts"),
   [
+    "export const DEFAULT_PATHS = { stories: 'stories', plugins: '.slice/plugins' };",
+    "",
     "export function main(): void {",
     "  process.stdout.write('smoke');",
     "}",
+    "",
+  ].join("\n"),
+);
+writeFileSync(
+  path.join(root, "README.md"),
+  [
+    "# smoke-krow",
+    "",
+    "Stories are collected views over captured records.",
+    "Plugins are lifecycle extensions that use stored context.",
     "",
   ].join("\n"),
 );
@@ -83,7 +95,7 @@ for (const relativePath of [
   }
 }
 
-const check = readJson(run(["check", "--root", root, "--about", "Smoke project"]));
+const check = readJson(run(["check", "--root", root, "--about", "Smoke project with story and plugin concepts"]));
 assertExists(check.check.reportRef);
 assertExists(check.check.observedRef);
 assertExists(check.check.draftRef);
@@ -95,6 +107,23 @@ if (!checkDraft.understanding || !Array.isArray(checkDraft.understanding.entrypo
 if (!Array.isArray(checkDraft.systemDocuments) || checkDraft.systemDocuments.length === 0) {
   throw new Error("check draft should include System Document drafts");
 }
+const draftIds = new Set(checkDraft.systemDocuments.map((document) => document.id));
+if (!draftIds.has("DOC:story") || !draftIds.has("DOC:plugin")) {
+  throw new Error("check should promote user-seeded terms with repository evidence into explicit decisions");
+}
+const unsafeDecision = check.check.decisions[0];
+const unsafeApply = readJson(run(["check-apply", check.check.checkId, JSON.stringify([{
+  decisionId: unsafeDecision.id,
+  selectedOptionId: "revise",
+  customInput: JSON.stringify({
+    key: "manual-extra-doc",
+    summary: "This tries to create a new durable document through an existing decision.",
+  }),
+}]), "--root", root]));
+if (!unsafeApply.applied.skipped.some((item) => item.includes("revise cannot change decision identity"))) {
+  throw new Error("check-apply should reject revisions that create a new System Document identity");
+}
+assertMissing(".krow/system/docs/manual-extra-doc.md");
 const approveAnswers = check.check.decisions.map((decision) => ({
   decisionId: decision.id,
   selectedOptionId: "approve",

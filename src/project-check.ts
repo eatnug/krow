@@ -291,6 +291,50 @@ const subjectStopWords = new Set([
   "value",
 ]);
 
+const seedTermStopWords = new Set([
+  "about",
+  "agent",
+  "agents",
+  "atomic",
+  "based",
+  "build",
+  "captures",
+  "chat",
+  "code",
+  "codebase",
+  "command",
+  "commands",
+  "context",
+  "current",
+  "data",
+  "file",
+  "files",
+  "first",
+  "from",
+  "into",
+  "local",
+  "make",
+  "makes",
+  "memory",
+  "partner",
+  "project",
+  "repo",
+  "repository",
+  "runtime",
+  "store",
+  "stores",
+  "stored",
+  "system",
+  "that",
+  "this",
+  "thought",
+  "turn",
+  "user",
+  "using",
+  "with",
+  "work",
+]);
+
 function nowCompact(): string {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
@@ -1076,6 +1120,137 @@ function subjectTitleFromPhrase(value: string): string | undefined {
   return titleFromWords(words);
 }
 
+function seedTitleFromPhrase(value: string): string | undefined {
+  const phrase = humanizePhrase(value);
+  if (!phrase) {
+    return undefined;
+  }
+  const words = normalizeSearchText(phrase)
+    .split(" ")
+    .filter((word) => word.length > 1 && !seedTermStopWords.has(word) && !subjectStopWords.has(word) && !/^\d+$/.test(word));
+  if (words.length === 0 || words.length > 4) {
+    return undefined;
+  }
+  return titleFromWords(words);
+}
+
+function singularizeWord(value: string): string {
+  if (value.endsWith("ies") && value.length > 4) {
+    return `${value.slice(0, -3)}y`;
+  }
+  if (value.endsWith("s") && value.length > 3 && !/(ss|us|is)$/.test(value)) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
+
+function extractSeedTerms(text?: string): string[] {
+  if (!text) {
+    return [];
+  }
+
+  const terms: string[] = [];
+  const push = (raw: string | undefined): void => {
+    if (!raw) {
+      return;
+    }
+    const title = seedTitleFromPhrase(raw);
+    if (title) {
+      terms.push(title);
+    }
+  };
+
+  for (const match of text.matchAll(/`([^`\n]{2,80})`/g)) {
+    push(match[1]);
+  }
+
+  const englishWords = normalizeSearchText(text)
+    .split(" ")
+    .filter((word) => /^[a-z][a-z0-9-]*$/.test(word))
+    .filter((word) => word.length >= 4 && !seedTermStopWords.has(word) && !subjectStopWords.has(word));
+
+  for (const word of englishWords) {
+    push(singularizeWord(word));
+  }
+
+  return unique(terms);
+}
+
+function evidencePriority(file: CodeInventoryFile): number {
+  if (file.role === "runtime" && file.kind === "source") {
+    return 0;
+  }
+  if (file.entrypoint) {
+    return 1;
+  }
+  if (file.kind === "source") {
+    return 2;
+  }
+  if (file.kind === "config") {
+    return 3;
+  }
+  if (file.kind === "test") {
+    return 4;
+  }
+  if (file.kind === "doc") {
+    return 5;
+  }
+  return 6;
+}
+
+function searchFormsForTerm(term: string): string[] {
+  const base = normalizeSearchText(term);
+  const forms = new Set<string>([base]);
+  for (const word of base.split(" ").filter(Boolean)) {
+    forms.add(word);
+    forms.add(singularizeWord(word));
+    if (word.endsWith("y")) {
+      forms.add(`${word.slice(0, -1)}ies`);
+    } else if (!word.endsWith("s")) {
+      forms.add(`${word}s`);
+    }
+  }
+  return [...forms].filter((form) => form.length >= 3 && !seedTermStopWords.has(form));
+}
+
+function normalizedTextContainsForm(text: string, form: string): boolean {
+  const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, "i").test(text);
+}
+
+function seedEvidenceForTerm(inventory: CodeInventory, term: string): Array<{ ref: string; kind: "source" | "doc" }> {
+  const forms = searchFormsForTerm(term);
+  if (forms.length === 0) {
+    return [];
+  }
+
+  return inventory.files
+    .filter((file) => file.size <= maxReadableBytes && file.role !== "support" && file.role !== "artifact")
+    .map((file) => {
+      const pathText = normalizeSearchText(file.path);
+      const symbolText = normalizeSearchText(file.symbols.join(" "));
+      const absolute = path.join(inventory.root, file.path);
+      const contentText = existsSync(absolute) ? normalizeSearchText(readFileSync(absolute, "utf8")) : "";
+      const matches = forms.some((form) =>
+        normalizedTextContainsForm(pathText, form)
+        || normalizedTextContainsForm(symbolText, form)
+        || normalizedTextContainsForm(contentText, form),
+      );
+      if (!matches) {
+        return undefined;
+      }
+      return {
+        ref: file.path,
+        kind: file.kind === "doc" ? "doc" as const : "source" as const,
+        priority: evidencePriority(file),
+      };
+    })
+    .filter((item): item is { ref: string; kind: "source" | "doc"; priority: number } => Boolean(item))
+    .sort((left, right) => left.priority - right.priority || left.ref.localeCompare(right.ref))
+    .slice(0, 6)
+    .map(({ ref, kind }) => ({ ref, kind }));
+}
+
 function docPriority(relativePath: string): number {
   const lower = relativePath.toLowerCase();
   if (primaryDocumentNames.has(lower)) {
@@ -1284,11 +1459,50 @@ function addRepositoryUnderstandingCandidates(
   }
 }
 
+function addUserSeedCandidates(
+  about: string | undefined,
+  inventory: CodeInventory,
+  addCandidate: (title: string | undefined, evidence: string, options: {
+    kind: ObservedSystemSubject["kind"];
+    layer: ObservedSystemSubject["layer"];
+    score: number;
+    tier: EvidenceTier;
+    evidenceKind: string;
+    means: string;
+    symbol?: string;
+  }) => void,
+): void {
+  for (const term of extractSeedTerms(about)) {
+    const evidence = seedEvidenceForTerm(inventory, term);
+    const hasSourceEvidence = evidence.some((item) => item.kind === "source");
+    if (!hasSourceEvidence) {
+      continue;
+    }
+    evidence.forEach((item, index) => {
+      addCandidate(term, item.ref, {
+        kind: "subject",
+        layer: "product",
+        score: index === 0 ? 9 : 2,
+        tier: "strong",
+        evidenceKind: item.kind === "source" ? "user-seed-source-match" : "user-seed-doc-match",
+        means: `User-seeded project concept matched against repository evidence. Confirm the exact boundary before approving ${term} into the Glossary/System Model.`,
+      });
+    });
+  }
+}
+
 function groundedCandidate(candidate: ObservedSystemSubject): ObservedSystemSubject {
   if (candidate.evidenceTier !== "strong") {
     return candidate;
   }
-  const strongEvidenceKinds = new Set(["entrypoint-flow", "runtime-file", "runtime-symbol", "package-name", "package-bin"]);
+  const strongEvidenceKinds = new Set([
+    "entrypoint-flow",
+    "runtime-file",
+    "runtime-symbol",
+    "package-name",
+    "package-bin",
+    "user-seed-source-match",
+  ]);
   if (candidate.evidenceKinds.some((kind) => strongEvidenceKinds.has(kind))) {
     return candidate;
   }
@@ -1392,6 +1606,7 @@ function observedSystemSubjects(
     });
   }
 
+  addUserSeedCandidates(about, inventory, addCandidate);
   addPackageTerms(inventory.root, addCandidate);
   addRepositoryUnderstandingCandidates(inventory.understanding, addCandidate);
 
@@ -1943,8 +2158,21 @@ function systemDocumentFromDecision(document: SystemDocumentDraft, answer: Decis
 
   if (input.startsWith("{")) {
     const parsed = JSON.parse(input) as Partial<SystemDocumentDraft> & { term?: string; key?: string; means?: string };
+    const revisedKey = parsed.key ? slugify(parsed.key) : document.sourceSubjectKey;
+    if (revisedKey !== document.sourceSubjectKey) {
+      throw new Error("revise cannot change decision identity; reject this decision and run check again with the refined seed");
+    }
+    if (parsed.id && parsed.id !== document.id) {
+      throw new Error("revise cannot change System Document ID; reject this decision and run check again with the refined seed");
+    }
+    if (parsed.sourceSubjectKey && parsed.sourceSubjectKey !== document.sourceSubjectKey) {
+      throw new Error("revise cannot change source subject key; reject this decision and run check again with the refined seed");
+    }
+    if (parsed.terms?.[0] && parsed.terms[0] !== `TERM:${document.sourceSubjectKey}`) {
+      throw new Error("revise cannot change primary Glossary term ID; reject this decision and run check again with the refined seed");
+    }
     const title = parsed.title ?? parsed.term ?? document.title;
-    const key = parsed.key ? slugify(parsed.key) : document.sourceSubjectKey;
+    const key = document.sourceSubjectKey;
     const id = parsed.id ?? `DOC:${key}`;
     const summary = parsed.summary ?? parsed.means ?? document.summary;
     return {
@@ -2069,7 +2297,13 @@ export function applyProjectCheckDecisions(input: {
       skipped.push(`${answer.decisionId}: unknown decision id`);
       continue;
     }
-    const document = systemDocumentFromDecision(candidate, answer);
+    let document: SystemDocumentDraft | undefined;
+    try {
+      document = systemDocumentFromDecision(candidate, answer);
+    } catch (error) {
+      skipped.push(`${answer.decisionId}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
     if (!document) {
       skipped.push(`${answer.decisionId}: ${answer.selectedOptionId}`);
       continue;
