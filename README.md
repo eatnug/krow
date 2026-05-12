@@ -14,17 +14,11 @@ npx --yes krow-cli@latest init
 Then open your coding agent and ask for work:
 
 ```text
+# in your coding agent
+
 $work I want to build a habit tracking app.
 $work Add login and paid subscription gating.
 $work Fix the dashboard loading bug.
-```
-
-`init` installs agent commands by default:
-
-```text
-Codex:       $work, $check
-Claude Code: /work, /check
-Gemini CLI: /work, /check
 ```
 
 ## Work
@@ -62,13 +56,57 @@ Glossary + System Model
 
 ## Brownfield Check
 
-Use `$check` when krow is added to an existing codebase.
+Use `$check` later when krow is added to an existing codebase.
 
 ```text
 $check about: React app. Free and paid subscription states control feature access.
 ```
 
 It reads the repository, drafts `.krow/system/glossary.md`, `.krow/system/map.md`, and `.krow/system/docs/*.md`, then asks what should be approved.
+
+## Document Shape
+
+Glossary terms define the words:
+
+```md
+## Free User
+
+ID: TERM:free-user
+Kind: Noun
+
+Meaning:
+A User without an active paid Subscription.
+
+Boundary:
+Does not include trial or paid users.
+```
+
+System Documents describe the software with those words:
+
+```md
+# Daily Recommendation Access
+
+ID: DOC:daily-recommendation-access
+Kind: Capability
+
+## Statements
+
+### Free User Access
+
+ID: STMT:daily-recommendation-access.free-user
+
+Statement:
+Free User is blocked from Daily Recommendation when Subscription is inactive.
+
+Terms:
+- TERM:free-user
+- TERM:daily-recommendation
+- TERM:subscription
+
+References:
+- source: src/recommendations/access.ts
+- test: src/recommendations/access.test.ts
+```
 
 ## What It Creates
 
