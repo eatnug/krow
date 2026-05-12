@@ -121,10 +121,9 @@ if (!Array.isArray(checkDraft.systemDocuments) || checkDraft.systemDocuments.len
   throw new Error("check draft should include System Document drafts");
 }
 const draftIds = new Set(checkDraft.systemDocuments.map((document) => document.id));
-if (!draftIds.has("DOC:story") || !draftIds.has("DOC:plugin")) {
-  throw new Error("check should promote user-seeded terms with repository evidence into explicit decisions");
-}
 for (const noisyId of [
+  "DOC:story",
+  "DOC:plugin",
   "DOC:behavior",
   "DOC:record",
   "DOC:should",
@@ -195,7 +194,7 @@ if (workIndex.includes("TERM:<id>") || workIndex.includes("DOC:<id>") || workInd
 
 const glossary = readFileSync(path.join(root, ".krow/system/glossary.md"), "utf8");
 if (!glossary.startsWith("# Glossary")) {
-  throw new Error("glossary seed is invalid");
+  throw new Error("initial glossary file is invalid");
 }
 
 process.stdout.write(`v2 smoke passed: ${root}\n`);

@@ -199,48 +199,6 @@ const artifactPathFragments = [
   "samples",
   "generated",
 ];
-const primaryDocumentNames = new Set([
-  "readme.md",
-  "readme.mdx",
-  "agents.md",
-  "claude.md",
-  "codex.md",
-  "gemini.md",
-]);
-const productDocPrefixes = ["docs/"];
-const genericHeadingStopWords = new Set([
-  "architecture",
-  "artifact",
-  "commands",
-  "command authority",
-  "configuration",
-  "development",
-  "decision loop",
-  "examples",
-  "findings",
-  "getting started",
-  "generated evidence",
-  "how it works",
-  "installation",
-  "local development",
-  "next step",
-  "overview",
-  "publishing",
-  "questions",
-  "quick start",
-  "reference",
-  "repository layout",
-  "rules",
-  "roadmap",
-  "setup",
-  "startup",
-  "strong",
-  "summary",
-  "testing",
-  "usage",
-  "weak",
-  "write boundary",
-]);
 const importExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"];
 const knownAcronyms = new Set(["ai", "api", "cli", "css", "ddd", "html", "http", "json", "prd", "sql", "ui", "url", "ux"]);
 
@@ -289,64 +247,6 @@ const subjectStopWords = new Set([
   "types",
   "utils",
   "value",
-]);
-
-const seedTermStopWords = new Set([
-  "about",
-  "agent",
-  "agents",
-  "atomic",
-  "based",
-  "build",
-  "captures",
-  "chat",
-  "claude",
-  "code",
-  "codebase",
-  "codex",
-  "command",
-  "commands",
-  "context",
-  "current",
-  "data",
-  "doc",
-  "docs",
-  "document",
-  "documents",
-  "file",
-  "files",
-  "first",
-  "first-class",
-  "from",
-  "gemini",
-  "into",
-  "local",
-  "make",
-  "makes",
-  "memory",
-  "partner",
-  "project",
-  "repo",
-  "repository",
-  "runtime",
-  "source",
-  "store",
-  "stores",
-  "stored",
-  "system",
-  "that",
-  "the",
-  "this",
-  "thought",
-  "term",
-  "terms",
-  "turn",
-  "it",
-  "use",
-  "user",
-  "using",
-  "with",
-  "work",
 ]);
 
 function nowCompact(): string {
@@ -907,7 +807,6 @@ function buildRepositoryUnderstanding(
   files: CodeInventoryFile[],
   entrypoints: Set<string>,
   runtimeFileOrder: string[],
-  about?: string,
 ): RepositoryUnderstanding {
   const runtimeFiles = files.filter((file) => file.role === "runtime").map((file) => file.path);
   const supportFiles = files.filter((file) => file.role === "support").map((file) => file.path);
@@ -988,7 +887,7 @@ function classifyFileRole(
   return "other";
 }
 
-function buildCodeInventory(rootDir: string, scope?: string, about?: string): CodeInventory {
+function buildCodeInventory(rootDir: string, scope?: string): CodeInventory {
   const root = path.resolve(rootDir);
   const scopedFiles = scopeFiles(root, scope);
   const entrypoints = packageEntrypoints(root);
@@ -1018,7 +917,7 @@ function buildCodeInventory(rootDir: string, scope?: string, about?: string): Co
     generatedAt: nowIso(),
     root,
     fileCount: files.length,
-    understanding: buildRepositoryUnderstanding(root, files, entrypoints, runtimeFileOrder, about),
+    understanding: buildRepositoryUnderstanding(root, files, entrypoints, runtimeFileOrder),
     files,
   };
 }
@@ -1105,252 +1004,6 @@ function glossaryTerms(content: string): string[] {
   return unique(values.map(normalizeSearchText).filter(Boolean));
 }
 
-function humanizePhrase(value: string): string {
-  return value
-    .replace(/[`*_#>\[\](){}]/g, " ")
-    .replace(/[:：-]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function subjectTitleFromPhrase(value: string): string | undefined {
-  const phrase = humanizePhrase(value);
-  if (!phrase) {
-    return undefined;
-  }
-  const normalized = normalizeSearchText(phrase);
-  if (!normalized || genericHeadingStopWords.has(normalized)) {
-    return undefined;
-  }
-  const words = normalized
-    .split(" ")
-    .filter((word) => word.length > 1 && !subjectStopWords.has(word) && !/^\d+$/.test(word));
-  if (words.length === 0 || words.length > 5) {
-    return undefined;
-  }
-  if (!words.some((word) => word.length >= 4 || /[가-힣]/.test(word))) {
-    return undefined;
-  }
-  return titleFromWords(words);
-}
-
-function seedTitleFromPhrase(value: string): string | undefined {
-  const phrase = humanizePhrase(value);
-  if (!phrase) {
-    return undefined;
-  }
-  const words = normalizeSearchText(phrase)
-    .split(" ")
-    .filter((word) => word.length > 1 && !seedTermStopWords.has(word) && !subjectStopWords.has(word) && !/^\d+$/.test(word));
-  if (words.length === 0 || words.length > 4) {
-    return undefined;
-  }
-  return titleFromWords(words);
-}
-
-function singularizeWord(value: string): string {
-  if (value.endsWith("ies") && value.length > 4) {
-    return `${value.slice(0, -3)}y`;
-  }
-  if (value.endsWith("s") && value.length > 3 && !/(ss|us|is)$/.test(value)) {
-    return value.slice(0, -1);
-  }
-  return value;
-}
-
-function extractSeedTerms(text?: string): string[] {
-  if (!text) {
-    return [];
-  }
-
-  const terms: string[] = [];
-  const excluded = new Set<string>();
-  const push = (raw: string | undefined): void => {
-    if (!raw) {
-      return;
-    }
-    const title = seedTitleFromPhrase(raw);
-    if (title) {
-      terms.push(title);
-    }
-  };
-  const exclude = (raw: string | undefined): void => {
-    if (!raw) {
-      return;
-    }
-    const title = seedTitleFromPhrase(raw);
-    if (title) {
-      excluded.add(slugify(title));
-    }
-  };
-
-  for (const match of text.matchAll(/`([^`\n]{2,80})`/g)) {
-    push(match[1]);
-  }
-
-  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
-    const capitalizedTerms = [...sentence.matchAll(/\b(?:[A-Z]{2,}|[A-Z][a-z0-9]+)(?:\s+(?:[A-Z]{2,}|[A-Z][a-z0-9]+))*\b/g)]
-      .map((match) => match[0]);
-    const rejectsDocument = /\bnot\b[^.!?]*(?:first[- ]class|system document|separate document|separate doc)\b/i.test(sentence)
-      || /\b(?:rather than|instead of)\b[^.!?]*\bseparate\b[^.!?]*(?:document|doc)\b/i.test(sentence);
-    for (const term of capitalizedTerms) {
-      if (rejectsDocument) {
-        exclude(term);
-      } else {
-        push(term);
-      }
-    }
-  }
-
-  return unique(terms).filter((term) => !excluded.has(slugify(term)));
-}
-
-function evidencePriority(file: CodeInventoryFile): number {
-  if (file.role === "runtime" && file.kind === "source") {
-    return 0;
-  }
-  if (file.entrypoint) {
-    return 1;
-  }
-  if (file.kind === "source") {
-    return 2;
-  }
-  if (file.kind === "config") {
-    return 3;
-  }
-  if (file.kind === "test") {
-    return 4;
-  }
-  if (file.kind === "doc") {
-    return 5;
-  }
-  return 6;
-}
-
-function searchFormsForTerm(term: string): string[] {
-  const base = normalizeSearchText(term);
-  const forms = new Set<string>([base]);
-  for (const word of base.split(" ").filter(Boolean)) {
-    forms.add(word);
-    forms.add(singularizeWord(word));
-    if (word.endsWith("y")) {
-      forms.add(`${word.slice(0, -1)}ies`);
-    } else if (!word.endsWith("s")) {
-      forms.add(`${word}s`);
-    }
-  }
-  return [...forms].filter((form) => form.length >= 3 && !seedTermStopWords.has(form));
-}
-
-function normalizedTextContainsForm(text: string, form: string): boolean {
-  const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, "i").test(text);
-}
-
-function seedEvidenceForTerm(inventory: CodeInventory, term: string): Array<{ ref: string; kind: "source" | "doc" }> {
-  const forms = searchFormsForTerm(term);
-  if (forms.length === 0) {
-    return [];
-  }
-
-  return inventory.files
-    .filter((file) => file.size <= maxReadableBytes && file.role !== "support" && file.role !== "artifact")
-    .map((file) => {
-      const pathText = normalizeSearchText(file.path);
-      const symbolText = normalizeSearchText(file.symbols.join(" "));
-      const absolute = path.join(inventory.root, file.path);
-      const contentText = existsSync(absolute) ? normalizeSearchText(readFileSync(absolute, "utf8")) : "";
-      const matches = forms.some((form) =>
-        normalizedTextContainsForm(pathText, form)
-        || normalizedTextContainsForm(symbolText, form)
-        || normalizedTextContainsForm(contentText, form),
-      );
-      if (!matches) {
-        return undefined;
-      }
-      return {
-        ref: file.path,
-        kind: file.kind === "doc" ? "doc" as const : "source" as const,
-        priority: evidencePriority(file),
-      };
-    })
-    .filter((item): item is { ref: string; kind: "source" | "doc"; priority: number } => Boolean(item))
-    .sort((left, right) => left.priority - right.priority || left.ref.localeCompare(right.ref))
-    .slice(0, 6)
-    .map(({ ref, kind }) => ({ ref, kind }));
-}
-
-function docPriority(relativePath: string): number {
-  const lower = relativePath.toLowerCase();
-  if (primaryDocumentNames.has(lower)) {
-    return 0;
-  }
-  if (productDocPrefixes.some((prefix) => lower.startsWith(prefix))) {
-    return 1;
-  }
-  return 2;
-}
-
-function documentEvidenceFiles(inventory: CodeInventory): CodeInventoryFile[] {
-  return inventory.files
-    .filter((file) => file.kind === "doc" && file.role === "document" && file.size <= maxReadableBytes)
-    .sort((left, right) => docPriority(left.path) - docPriority(right.path) || left.path.localeCompare(right.path))
-    .slice(0, 24);
-}
-
-function addTermsFromText(
-  text: string,
-  evidence: string,
-  addCandidate: (title: string | undefined, evidence: string, options: {
-    kind: ObservedSystemSubject["kind"];
-    layer: ObservedSystemSubject["layer"];
-    score: number;
-    tier: EvidenceTier;
-    evidenceKind: string;
-    means: string;
-    symbol?: string;
-  }) => void,
-): void {
-  const seen = new Set<string>();
-  const push = (raw: string, score: number, evidenceKind: string): void => {
-    const title = subjectTitleFromPhrase(raw);
-    if (!title) {
-      return;
-    }
-    const key = slugify(title);
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    addCandidate(title, evidence, {
-      kind: "subject",
-      layer: "product",
-      score,
-      tier: "strong",
-      evidenceKind,
-      means: `Project-facing term evidenced by ${evidence}. Confirm its boundary and wording before approving it into the Glossary/System Model.`,
-    });
-  };
-
-  for (const match of text.matchAll(/^#{1,3}\s+(.+)$/gm)) {
-    if (match[1]) {
-      push(match[1], 6, "document-heading");
-    }
-  }
-
-  for (const match of text.matchAll(/`([A-Za-z][A-Za-z0-9가-힣 _./-]{2,60})`/g)) {
-    if (match[1] && !/[./][A-Za-z0-9]+$/.test(match[1])) {
-      push(match[1], 4, "document-term");
-    }
-  }
-
-  for (const match of text.matchAll(/\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){0,3})\b/g)) {
-    if (match[1]) {
-      push(match[1], 2, "document-phrase");
-    }
-  }
-}
-
 function addPackageTerms(
   rootDir: string,
   addCandidate: (title: string | undefined, evidence: string, options: {
@@ -1368,7 +1021,6 @@ function addPackageTerms(
     return;
   }
   const name = typeof pkg.name === "string" ? pkg.name : undefined;
-  const description = typeof pkg.description === "string" ? pkg.description : undefined;
   if (name) {
     addCandidate(subjectTitleFromIdentifier(name), "package.json:name", {
       kind: "subject",
@@ -1378,9 +1030,6 @@ function addPackageTerms(
       evidenceKind: "package-name",
       means: "Project-facing package or product name evidenced by package.json. Confirm the exact product boundary before approving it into the Glossary/System Model.",
     });
-  }
-  if (description) {
-    addTermsFromText(description, "package.json:description", addCandidate);
   }
   if (pkg.bin && typeof pkg.bin === "object") {
     for (const key of Object.keys(pkg.bin as Record<string, unknown>)) {
@@ -1488,38 +1137,6 @@ function addRepositoryUnderstandingCandidates(
   }
 }
 
-function addUserSeedCandidates(
-  about: string | undefined,
-  inventory: CodeInventory,
-  addCandidate: (title: string | undefined, evidence: string, options: {
-    kind: ObservedSystemSubject["kind"];
-    layer: ObservedSystemSubject["layer"];
-    score: number;
-    tier: EvidenceTier;
-    evidenceKind: string;
-    means: string;
-    symbol?: string;
-  }) => void,
-): void {
-  for (const term of extractSeedTerms(about)) {
-    const evidence = seedEvidenceForTerm(inventory, term);
-    const hasSourceEvidence = evidence.some((item) => item.kind === "source");
-    if (!hasSourceEvidence) {
-      continue;
-    }
-    evidence.forEach((item, index) => {
-      addCandidate(term, item.ref, {
-        kind: "subject",
-        layer: "product",
-        score: index === 0 ? 9 : 2,
-        tier: "strong",
-        evidenceKind: item.kind === "source" ? "user-seed-source-match" : "user-seed-doc-match",
-        means: `User-seeded project concept matched against repository evidence. Confirm the exact boundary before approving ${term} into the Glossary/System Model.`,
-      });
-    });
-  }
-}
-
 function groundedCandidate(candidate: ObservedSystemSubject): ObservedSystemSubject {
   if (candidate.evidenceTier !== "strong") {
     return candidate;
@@ -1530,7 +1147,6 @@ function groundedCandidate(candidate: ObservedSystemSubject): ObservedSystemSubj
     "runtime-symbol",
     "package-name",
     "package-bin",
-    "user-seed-source-match",
   ]);
   if (candidate.evidenceKinds.some((kind) => strongEvidenceKinds.has(kind))) {
     return candidate;
@@ -1581,7 +1197,6 @@ function observedSystemSubjects(
   inventory: CodeInventory,
   existingTerms: string[],
   existingSystemDocumentKeys: string[],
-  about?: string,
 ): ObservedSystemSubject[] {
   const byKey = new Map<string, ObservedSystemSubject & { score: number }>();
   const existing = new Set([...existingTerms, ...existingSystemDocumentKeys.map(normalizeSearchText)]);
@@ -1635,7 +1250,6 @@ function observedSystemSubjects(
     });
   }
 
-  addUserSeedCandidates(about, inventory, addCandidate);
   addPackageTerms(inventory.root, addCandidate);
   addRepositoryUnderstandingCandidates(inventory.understanding, addCandidate);
 
@@ -2074,7 +1688,7 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
 
   ensureKrowDirectory(checkDir, rootDir);
 
-  const inventory = buildCodeInventory(rootDir, input.scope, input.about);
+  const inventory = buildCodeInventory(rootDir, input.scope);
   writeKrowFile(observedRef, `${JSON.stringify(inventory, null, 2)}\n`, rootDir);
 
   const existingSystemDocuments = loadSystemDocuments(rootDir);
@@ -2083,7 +1697,6 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
     inventory,
     glossaryTerms(glossary),
     existingSystemDocuments.flatMap((systemDocument) => [systemDocument.key, systemDocument.title]),
-    input.about,
   );
   const strongSubjects = observedSubjects.filter((subject) => subject.evidenceTier !== "weak");
   const draftSystemDocuments = systemDocumentDrafts(strongSubjects);
@@ -2189,16 +1802,16 @@ function systemDocumentFromDecision(document: SystemDocumentDraft, answer: Decis
     const parsed = JSON.parse(input) as Partial<SystemDocumentDraft> & { term?: string; key?: string; means?: string };
     const revisedKey = parsed.key ? slugify(parsed.key) : document.sourceSubjectKey;
     if (revisedKey !== document.sourceSubjectKey) {
-      throw new Error("revise cannot change decision identity; reject this decision and run check again with the refined seed");
+      throw new Error("revise cannot change decision identity; reject this decision and run check again with refined input");
     }
     if (parsed.id && parsed.id !== document.id) {
-      throw new Error("revise cannot change System Document ID; reject this decision and run check again with the refined seed");
+      throw new Error("revise cannot change System Document ID; reject this decision and run check again with refined input");
     }
     if (parsed.sourceSubjectKey && parsed.sourceSubjectKey !== document.sourceSubjectKey) {
-      throw new Error("revise cannot change source subject key; reject this decision and run check again with the refined seed");
+      throw new Error("revise cannot change source subject key; reject this decision and run check again with refined input");
     }
     if (parsed.terms?.[0] && parsed.terms[0] !== `TERM:${document.sourceSubjectKey}`) {
-      throw new Error("revise cannot change primary Glossary term ID; reject this decision and run check again with the refined seed");
+      throw new Error("revise cannot change primary Glossary term ID; reject this decision and run check again with refined input");
     }
     const title = parsed.title ?? parsed.term ?? document.title;
     const key = document.sourceSubjectKey;
