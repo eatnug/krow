@@ -35,6 +35,7 @@ interface RepositoryUnderstanding {
   flows: RepositoryFlow[];
   sourceFlowCandidates: RepositoryFlow[];
   readingOrder: string[];
+  contextDocuments?: string[];
   notes: string[];
 }
 
@@ -98,6 +99,18 @@ interface SystemDocumentDraft {
   sourceSubjectKey: string;
 }
 
+interface GlossaryTermDraft {
+  id: string;
+  title: string;
+  kind: "Noun" | "Verb" | "State" | "Rule";
+  status: "proposed" | "approved";
+  meaning: string;
+  boundary?: string;
+  aliases: string[];
+  references: string[];
+  sourceSubjectKey?: string;
+}
+
 interface CheckProposal {
   checkId: string;
   generatedAt: string;
@@ -105,7 +118,18 @@ interface CheckProposal {
   stage: "agent-draft-required" | "ready-for-approval";
   understanding: RepositoryUnderstanding;
   subjects: ObservedSystemSubject[];
+  terms: GlossaryTermDraft[];
   systemDocuments: SystemDocumentDraft[];
+}
+
+interface CheckQuestion {
+  id?: string;
+  kind?: string;
+  question?: string;
+  status?: string | null;
+  blocksApproval?: boolean;
+  context?: string[];
+  whyItMatters?: string;
 }
 
 interface CheckEvidenceBundle {
@@ -122,7 +146,7 @@ interface CheckEvidenceBundle {
 
 export interface ProjectCheckResult {
   checkId: string;
-  status: "clean" | "needs-review";
+  status: "needs-agent-draft" | "needs-review" | "clean";
   reportRef: string;
   observedRef: string;
   evidenceRef: string;
@@ -137,7 +161,12 @@ export interface ProjectCheckResult {
   summary: {
     scannedFileCount: number;
     draftSystemDocumentCount: number;
+    draftGlossaryTermCount: number;
     approvalQuestionCount: number;
+    approvalPromptCount: number;
+    meaningQuestionCount: number;
+    blockingMeaningQuestionCount: number;
+    artifactIssueCount: number;
     observedSubjectCount: number;
     findingCount: number;
     writesOutsideKrow: false;
@@ -207,7 +236,7 @@ const symbolicExtensions = new Set([...sourceExtensions, ...configExtensions]);
 const maxReadableBytes = 500_000;
 const maxFiles = 4000;
 const maxSymbolsPerFile = 40;
-const maxApprovalQuestions = 8;
+const maxApprovalPromptsPerKind = 8;
 
 const supportPathPrefixes = [".codex/", ".claude/", ".gemini/"];
 const artifactPathFragments = [
@@ -503,11 +532,10 @@ function sourceEntrypointCounterparts(packageEntrypoint: string, files: string[]
   });
 }
 
-function packageEntrypoints(rootDir: string): Set<string> {
+function packageEntrypointDeclarations(rootDir: string): string[] {
   const pkg = packageJson(rootDir);
-  const entrypoints = new Set<string>();
   if (!pkg) {
-    return entrypoints;
+    return [];
   }
 
   const candidates: string[] = [];
@@ -528,7 +556,13 @@ function packageEntrypoints(rootDir: string): Set<string> {
   }
   collectExportTargets(pkg.exports, candidates);
 
-  for (const candidate of candidates) {
+  return unique(candidates);
+}
+
+function packageEntrypoints(rootDir: string): Set<string> {
+  const entrypoints = new Set<string>();
+
+  for (const candidate of packageEntrypointDeclarations(rootDir)) {
     const resolved = resolveRepoFile(rootDir, candidate);
     if (resolved) {
       entrypoints.add(resolved);
@@ -729,6 +763,55 @@ function firstFunctionCall(body: string): string | undefined {
   return body.match(/\b([A-Za-z_$][\w$]*)\s*\(/)?.[1];
 }
 
+function localFunctionCalls(body: string): string[] {
+  const blocked = new Set(["if", "for", "while", "switch", "catch", "return", "function"]);
+  return unique(
+    [...body.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)]
+      .map((match) => match[1])
+      .filter((name): name is string => Boolean(name) && !blocked.has(name)),
+  );
+}
+
+function reachableLocalFunctionBodies(content: string, seedBodies: string[], maxDepth = 12): string[] {
+  const bodies: string[] = [];
+  const seen = new Set<string>();
+  const queue = seedBodies.flatMap(localFunctionCalls);
+
+  while (queue.length > 0 && seen.size < maxDepth) {
+    const functionName = queue.shift();
+    if (!functionName || seen.has(functionName)) {
+      continue;
+    }
+    seen.add(functionName);
+
+    const body = extractFunctionBody(content, functionName);
+    if (!body) {
+      continue;
+    }
+    bodies.push(body);
+    queue.push(...localFunctionCalls(body).filter((name) => !seen.has(name)));
+  }
+
+  return bodies;
+}
+
+function repoFileReferenceLiterals(rootDir: string, fromFile: string, body: string): string[] {
+  const refs: string[] = [];
+  for (const match of body.matchAll(/["'`]([^"'`\n]+)["'`]/g)) {
+    const literal = match[1]?.trim();
+    if (!literal || !literal.includes("/")) {
+      continue;
+    }
+    const resolved = literal.startsWith("./") || literal.startsWith("../")
+      ? resolveImport(rootDir, fromFile, literal)
+      : resolveRepoFile(rootDir, literal);
+    if (resolved) {
+      refs.push(resolved);
+    }
+  }
+  return unique(refs);
+}
+
 function titleFromCommand(command: string): string {
   return titleFromWords(command.split("-").filter(Boolean));
 }
@@ -757,10 +840,9 @@ function commandFlows(rootDir: string, entrypoint: string): RepositoryFlow[] {
       files.add(ref);
     }
 
-    if (/delegateInstaller\s*\(/.test(block.body) || /delegateInstaller\s*\(/.test(handlerBody)) {
-      const installRef = resolveRepoFile(rootDir, "install/krow.mjs");
-      if (installRef) {
-        files.add(installRef);
+    for (const body of [block.body, handlerBody, ...reachableLocalFunctionBodies(content, [block.body, handlerBody])]) {
+      for (const ref of repoFileReferenceLiterals(rootDir, entrypoint, body)) {
+        files.add(ref);
       }
     }
 
@@ -802,7 +884,7 @@ function buildRepositoryUnderstanding(
     ...uniqueFlows.flatMap((flow) => flow.files),
     ...sourceFlowCandidates.flatMap((flow) => flow.files),
     ...runtimeFileOrder,
-  ]).filter((ref) => files.some((file) => file.path === ref));
+  ]).filter((ref) => files.some((file) => file.path === ref && file.kind !== "doc"));
 
   const notes: string[] = [];
   if (entrypoints.size === 0) {
@@ -827,6 +909,7 @@ function buildRepositoryUnderstanding(
     flows: uniqueFlows,
     sourceFlowCandidates,
     readingOrder,
+    contextDocuments: contextDocumentOrder(files),
     notes,
   };
 }
@@ -843,6 +926,33 @@ function dedupeRepositoryFlows(flows: RepositoryFlow[]): RepositoryFlow[] {
     deduped.push(flow);
   }
   return deduped;
+}
+
+function isContextDocumentRef(ref: string): boolean {
+  return docExtensions.has(path.extname(ref));
+}
+
+function contextDocumentOrder(files: CodeInventoryFile[]): string[] {
+  const priority = (file: CodeInventoryFile): number => {
+    if (/^README\.md$/i.test(file.path)) {
+      return 0;
+    }
+    if (/^docs\/README\.md$/i.test(file.path)) {
+      return 1;
+    }
+    if (file.path.startsWith("docs/")) {
+      return 2;
+    }
+    if (/^(AGENTS|CLAUDE|CODEX|GEMINI)\.md$/i.test(file.path)) {
+      return 3;
+    }
+    return 4;
+  };
+
+  return files
+    .filter((file) => file.kind === "doc")
+    .sort((left, right) => priority(left) - priority(right) || left.path.localeCompare(right.path))
+    .map((file) => file.path);
 }
 
 function pathHasFragment(relativePath: string, fragments: string[]): boolean {
@@ -878,9 +988,11 @@ function classifyFileRole(
 function buildCodeInventory(rootDir: string, scope?: string): CodeInventory {
   const root = path.resolve(rootDir);
   const scopedFiles = scopeFiles(root, scope);
+  const declaredEntrypoints = packageEntrypointDeclarations(root);
   const entrypoints = packageEntrypoints(root);
-  const sourceEntrypoints = sourceEntrypointCandidates(entrypoints, scopedFiles);
-  const runtimeFileOrder = runtimeReachableFileOrder(root, scopedFiles, entrypoints);
+  const sourceEntrypoints = sourceEntrypointCandidates(new Set([...entrypoints, ...declaredEntrypoints]), scopedFiles);
+  const runtimeEntryPoints = new Set([...entrypoints, ...sourceEntrypoints]);
+  const runtimeFileOrder = runtimeReachableFileOrder(root, scopedFiles, runtimeEntryPoints);
   const runtimeReachable = new Set(runtimeFileOrder);
   const files = scopedFiles.map((relativePath): CodeInventoryFile => {
     const fullPath = path.join(root, relativePath);
@@ -1053,6 +1165,27 @@ function uncoveredExamples(rootDir: string, inventory: CodeInventory): CheckFind
     }));
 }
 
+function currentCheckFindings(rootDir: string, inventory: CodeInventory): CheckFinding[] {
+  const existingSystemDocuments = loadSystemDocuments(rootDir);
+  const glossary = loadGlossaryText(rootDir);
+  return [
+    ...(glossary.trim() ? [] : [{
+      kind: "empty-glossary" as const,
+      severity: "info" as const,
+      message: `${GLOSSARY_FILE} is missing or empty.`,
+      refs: [GLOSSARY_FILE],
+    }]),
+    ...(existingSystemDocuments.length > 0 ? [] : [{
+      kind: "empty-system-docs" as const,
+      severity: "info" as const,
+      message: "No System Documents were found.",
+      refs: [SYSTEM_DOCS_DIR],
+    }]),
+    ...brokenReferences(rootDir, existingSystemDocuments),
+    ...uncoveredExamples(rootDir, inventory),
+  ];
+}
+
 function systemDocumentMarkdown(document: SystemDocumentDraft, status: "proposed" | "approved"): string {
   const documentStatus = status === "approved" ? "Approved" : "Proposed";
   return [
@@ -1096,7 +1229,7 @@ function systemDocumentMarkdown(document: SystemDocumentDraft, status: "proposed
 }
 
 function systemDocumentDecisionPrompts(proposal: CheckProposal): DecisionPrompt[] {
-  return proposal.systemDocuments.slice(0, maxApprovalQuestions).map((document) => ({
+  return proposal.systemDocuments.slice(0, maxApprovalPromptsPerKind).map((document) => ({
     id: `doc:${document.sourceSubjectKey}`,
     kind: "approval" as const,
     target: {
@@ -1113,12 +1246,43 @@ function systemDocumentDecisionPrompts(proposal: CheckProposal): DecisionPrompt[
       `References: ${document.references.join(", ")}`,
       "Statements:",
       ...document.statements.map((statement) => `- ${statement.id}: ${statement.statement}`),
-      "Approve applies the Glossary term, System Document, System Statements, and System Map entry. Revise should provide precise replacement wording or JSON fields.",
+      "Approve applies this System Document, its System Statements, and the System Map entry. Revise should provide precise replacement wording or JSON fields.",
     ].join("\n"),
     options: [
       { id: "approve", label: "Approve", description: "Apply this System Document draft to .krow/system." },
       { id: "revise", label: "Revise", description: "Apply with explicit user-provided corrections." },
       { id: "reject", label: "Reject", description: "Do not add this System Document." },
+    ],
+  }));
+}
+
+function termDecisionId(term: GlossaryTermDraft): string {
+  return `term:${term.sourceSubjectKey ?? term.id.replace(/^TERM:/, "")}`;
+}
+
+function glossaryTermDecisionPrompts(proposal: CheckProposal): DecisionPrompt[] {
+  return (proposal.terms ?? []).slice(0, maxApprovalPromptsPerKind).map((term) => ({
+    id: termDecisionId(term),
+    kind: "approval" as const,
+    target: {
+      kind: "glossary" as const,
+      ref: `${checkRunDirPath(proposal.checkId)}/proposals.json#${term.id}`,
+      status: "proposed",
+    },
+    question: `Approve ${term.id} as a Glossary term?`,
+    context: [
+      `Title: ${term.title}`,
+      `Kind: ${term.kind}`,
+      `Meaning: ${term.meaning}`,
+      ...(term.boundary ? [`Boundary: ${term.boundary}`] : []),
+      `Aliases: ${term.aliases.join(", ") || "(none)"}`,
+      `References: ${term.references.join(", ")}`,
+      "Approve applies this term to .krow/system/glossary.md. Revise should provide precise replacement wording or JSON fields.",
+    ].join("\n"),
+    options: [
+      { id: "approve", label: "Approve", description: "Apply this Glossary term draft to .krow/system/glossary.md." },
+      { id: "revise", label: "Revise", description: "Apply with explicit user-provided corrections." },
+      { id: "reject", label: "Reject", description: "Do not add this Glossary term." },
     ],
   }));
 }
@@ -1179,6 +1343,71 @@ function emptyQuestionsJson(checkId: string): string {
   return `${JSON.stringify({ checkId, questions: [] }, null, 2)}\n`;
 }
 
+interface CheckArtifactStatus {
+  label: string;
+  ref: string;
+  status: string;
+  ready: boolean;
+  issue?: string;
+}
+
+function markdownStatus(ref: string, rootDir: string): string {
+  const absolute = absolutePath(ref, rootDir);
+  if (!existsSync(absolute)) {
+    return "Missing";
+  }
+  const content = readFileSync(absolute, "utf8");
+  return content.match(/^Status:\s*(.+)$/mi)?.[1]?.trim() ?? "Missing";
+}
+
+function artifactStatus(label: string, ref: string, rootDir: string): CheckArtifactStatus {
+  const status = markdownStatus(ref, rootDir);
+  const normalized = normalizeSearchText(status);
+  const ready = ["complete", "completed", "ready", "ready for approval"].includes(normalized);
+  return {
+    label,
+    ref,
+    status,
+    ready,
+    issue: ready ? undefined : `${label} is ${status}; mark it Complete before approval prompts are generated.`,
+  };
+}
+
+function checkArtifactStatuses(rootDir: string, refs: {
+  readingPlanRef: string;
+  understandingRef: string;
+}): CheckArtifactStatus[] {
+  return [
+    artifactStatus("Reading Plan", refs.readingPlanRef, rootDir),
+    artifactStatus("Understanding", refs.understandingRef, rootDir),
+  ];
+}
+
+function loadCheckQuestions(ref: string, rootDir: string): CheckQuestion[] {
+  const absolute = absolutePath(ref, rootDir);
+  if (!existsSync(absolute)) {
+    return [];
+  }
+  const parsed = JSON.parse(readFileSync(absolute, "utf8")) as unknown;
+  if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as { questions?: unknown }).questions)) {
+    return [];
+  }
+  return (parsed as { questions: unknown[] }).questions
+    .filter((question): question is CheckQuestion => Boolean(question) && typeof question === "object");
+}
+
+function isBlockingQuestion(question: CheckQuestion): boolean {
+  if (question.blocksApproval === false) {
+    return false;
+  }
+  const status = normalizeSearchText(String(question.status ?? "open"));
+  return !["answered", "resolved", "closed", "complete", "completed", "nonblocking"].includes(status);
+}
+
+function blockingQuestions(questions: CheckQuestion[]): CheckQuestion[] {
+  return questions.filter(isBlockingQuestion);
+}
+
 function emptyProposal(input: {
   checkId: string;
   generatedAt: string;
@@ -1192,6 +1421,7 @@ function emptyProposal(input: {
     stage: "agent-draft-required",
     understanding: input.understanding,
     subjects: [],
+    terms: [],
     systemDocuments: [],
   };
 }
@@ -1206,7 +1436,13 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
   draftRef: string;
   decisionsRef: string;
   proposal: CheckProposal;
+  artifactStatuses: CheckArtifactStatus[];
+  questions: CheckQuestion[];
 }): string {
+  const blockers = [
+    ...refs.artifactStatuses.filter((status) => !status.ready).map((status) => status.issue ?? `${status.label} is not complete.`),
+    ...blockingQuestions(refs.questions).map((question) => `${question.id ?? "question"}: ${question.question ?? "(missing question text)"}`),
+  ];
   return [
     "# Krow Check Report",
     "",
@@ -1222,14 +1458,31 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
     "## Summary",
     "",
     `- Scanned files: ${result.summary.scannedFileCount}`,
+    `- Draft Glossary Terms: ${result.summary.draftGlossaryTermCount}`,
     `- Draft System Documents: ${result.summary.draftSystemDocumentCount}`,
-    `- Approval questions: ${result.summary.approvalQuestionCount}`,
+    `- Approval prompts: ${result.summary.approvalPromptCount}`,
+    `- Meaning questions: ${result.summary.blockingMeaningQuestionCount} blocking / ${result.summary.meaningQuestionCount} total`,
+    `- Artifact issues: ${result.summary.artifactIssueCount}`,
     `- Findings: ${result.summary.findingCount}`,
     ...(refs.proposal.about ? [`- About: ${refs.proposal.about}`] : []),
+    "",
+    "## Readiness",
+    "",
+    ...refs.artifactStatuses.map((status) => `- ${status.label}: ${status.status} (${status.ref})`),
+    `- Approval prompts: ${result.decisions.length > 0 ? `${result.decisions.length} generated` : "not generated"}`,
+    `- Blocking meaning questions: ${result.summary.blockingMeaningQuestionCount}`,
+    "",
+    "## Meaning Questions",
+    "",
+    ...meaningQuestionList(refs.questions),
     "",
     "## Repository Understanding",
     "",
     ...repositoryUnderstandingMarkdown(refs.proposal.understanding),
+    "",
+    "## Draft Glossary Terms",
+    "",
+    ...glossaryTermDraftList(refs.proposal.terms),
     "",
     "## Draft System Documents",
     "",
@@ -1262,14 +1515,21 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
     "",
     "## Next Step",
     "",
-    result.decisions.length > 0
-      ? "Use the `$check` skill to ask the bundled questions and apply only approved decisions."
-      : "Fill the reading plan, understanding, proposals, and questions artifacts. Then run `check-decisions` for approval prompts.",
+    blockers.length > 0
+      ? `Resolve readiness blockers before approval prompts: ${blockers.join("; ")}`
+      : result.decisions.length > 0
+        ? "Use the `$check` skill to ask the bundled approval prompts and apply only approved decisions."
+        : "Fill the reading plan, understanding, proposals, and questions artifacts. Then run `check-decisions` for approval prompts.",
     "",
   ].join("\n");
 }
 
 function repositoryUnderstandingMarkdown(understanding: RepositoryUnderstanding): string[] {
+  const contextDocuments = unique([
+    ...(understanding.contextDocuments ?? []),
+    ...understanding.readingOrder.filter(isContextDocumentRef),
+  ]);
+  const runtimeReadingOrder = understanding.readingOrder.filter((ref) => !isContextDocumentRef(ref));
   return [
     `- Product name: ${understanding.productName ?? "(unknown)"}`,
     `- Product purpose: ${understanding.productPurpose ?? "(unknown)"}`,
@@ -1291,14 +1551,29 @@ function repositoryUnderstandingMarkdown(understanding: RepositoryUnderstanding)
       ? understanding.sourceFlowCandidates.map((flow) => `- ${flow.title}: ${flow.files.join(" -> ")}`)
       : ["- none detected"]),
     "",
-    "### Reading Order",
+    "### Runtime Reading Order",
     "",
-    ...markdownList(understanding.readingOrder),
+    ...markdownList(runtimeReadingOrder),
+    "",
+    "### Context Documents",
+    "",
+    ...markdownList(contextDocuments),
     "",
     "### Notes",
     "",
     ...markdownList(understanding.notes),
   ];
+}
+
+function meaningQuestionList(questions: CheckQuestion[]): string[] {
+  if (questions.length === 0) {
+    return ["- none"];
+  }
+  return questions.map((question) => {
+    const status = question.status ?? "open";
+    const blocking = isBlockingQuestion(question) ? "blocking" : "nonblocking";
+    return `- ${question.id ?? "(no id)"} [${blocking}, ${status}]: ${question.question ?? "(missing question text)"}`;
+  });
 }
 
 function systemDocumentDraftList(documents: SystemDocumentDraft[]): string[] {
@@ -1312,6 +1587,18 @@ function systemDocumentDraftList(documents: SystemDocumentDraft[]): string[] {
     `  References: ${document.references.join(", ")}`,
     "  Statements:",
     ...document.statements.map((statement) => `  - ${statement.id}: ${statement.statement}`),
+  ]);
+}
+
+function glossaryTermDraftList(terms: GlossaryTermDraft[] = []): string[] {
+  if (terms.length === 0) {
+    return ["- none"];
+  }
+  return terms.flatMap((term) => [
+    `- ${term.id}: ${term.title} (${term.kind})`,
+    `  Meaning: ${term.meaning}`,
+    ...(term.boundary ? [`  Boundary: ${term.boundary}`] : []),
+    `  References: ${term.references.join(", ")}`,
   ]);
 }
 
@@ -1397,23 +1684,14 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
   const decisions: DecisionPrompt[] = [];
   writeKrowFile(decisionsRef, `${JSON.stringify(decisions, null, 2)}\n`, rootDir);
 
-  const findings: CheckFinding[] = [
-    ...(glossary.trim() ? [] : [{
-      kind: "empty-glossary" as const,
-      severity: "info" as const,
-      message: `${GLOSSARY_FILE} is missing or empty.`,
-      refs: [GLOSSARY_FILE],
-    }]),
-    ...(existingSystemDocuments.length > 0 ? [] : [{
-      kind: "empty-system-docs" as const,
-      severity: "info" as const,
-      message: "No System Documents were found.",
-      refs: [SYSTEM_DOCS_DIR],
-    }]),
-    ...brokenReferences(rootDir, existingSystemDocuments),
-    ...uncoveredExamples(rootDir, inventory),
-  ];
-  const status: ProjectCheckResult["status"] = findings.length > 0 ? "needs-review" : "clean";
+  const findings = currentCheckFindings(rootDir, inventory);
+  const questions = loadCheckQuestions(questionsRef, rootDir);
+  const artifactStatuses = checkArtifactStatuses(rootDir, { readingPlanRef, understandingRef });
+  const artifactIssueCount = artifactStatuses.filter((artifact) => !artifact.ready).length;
+  const blockingMeaningQuestionCount = blockingQuestions(questions).length;
+  const status: ProjectCheckResult["status"] = proposal.stage === "agent-draft-required"
+    ? "needs-agent-draft"
+    : findings.length > 0 || artifactIssueCount > 0 || blockingMeaningQuestionCount > 0 ? "needs-review" : "clean";
   const resultWithoutRefs = {
     checkId,
     status,
@@ -1421,8 +1699,13 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
     decisions,
     summary: {
       scannedFileCount: inventory.fileCount,
+      draftGlossaryTermCount: proposal.terms.length,
       draftSystemDocumentCount: proposal.systemDocuments.length,
       approvalQuestionCount: decisions.length,
+      approvalPromptCount: decisions.length,
+      meaningQuestionCount: questions.length,
+      blockingMeaningQuestionCount,
+      artifactIssueCount,
       observedSubjectCount: proposal.subjects.length,
       findingCount: findings.length,
       writesOutsideKrow: false as const,
@@ -1439,6 +1722,8 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
     draftRef,
     decisionsRef,
     proposal,
+    artifactStatuses,
+    questions,
   }), rootDir);
 
   return {
@@ -1481,19 +1766,111 @@ export function buildProjectCheckDecisions(input: {
 }): ProjectCheckDecisionResult {
   const rootDir = path.resolve(input.rootDir ?? process.cwd());
   const checkId = normalizeCheckId(input.checkId);
+  const checkDir = checkRunDirPath(checkId);
+  const observedRef = `${checkDir}/observed.json`;
+  const evidenceRef = `${checkDir}/evidence.json`;
+  const readingPlanRef = `${checkDir}/reading-plan.md`;
+  const understandingRef = `${checkDir}/understanding.md`;
   const proposalsRef = `${checkRunDirPath(checkId)}/proposals.json`;
+  const questionsRef = `${checkDir}/questions.json`;
+  const draftRef = `${checkDir}/draft.json`;
   const decisionsRef = `${checkRunDirPath(checkId)}/decisions.json`;
+  const reportRef = `${checkDir}/result.md`;
   const proposal = loadProposal(checkId, rootDir);
+  const evidence = JSON.parse(readFileSync(absolutePath(evidenceRef, rootDir), "utf8")) as CheckEvidenceBundle;
+  const questions = loadCheckQuestions(questionsRef, rootDir);
+  const artifactStatuses = checkArtifactStatuses(rootDir, { readingPlanRef, understandingRef });
+  const artifactIssueCount = artifactStatuses.filter((artifact) => !artifact.ready).length;
+  const blockingMeaningQuestionCount = blockingQuestions(questions).length;
 
   if (proposal.stage !== "ready-for-approval") {
     throw new Error(`${proposalsRef} must set stage to "ready-for-approval" before check-decisions`);
   }
-  if (!Array.isArray(proposal.systemDocuments) || proposal.systemDocuments.length === 0) {
-    throw new Error(`${proposalsRef} must contain at least one System Document proposal before check-decisions`);
+  if (
+    (!Array.isArray(proposal.terms) || proposal.terms.length === 0)
+    && (!Array.isArray(proposal.systemDocuments) || proposal.systemDocuments.length === 0)
+  ) {
+    throw new Error(`${proposalsRef} must contain at least one Glossary term or System Document proposal before check-decisions`);
   }
 
-  const decisions = systemDocumentDecisionPrompts(proposal);
+  const findings = currentCheckFindings(rootDir, evidence.inventory);
+  const readinessBlockers = [
+    ...artifactStatuses.filter((artifact) => !artifact.ready).map((artifact) => artifact.issue ?? `${artifact.label} is not complete.`),
+    ...blockingQuestions(questions).map((question) => `${question.id ?? "question"}: ${question.question ?? "(missing question text)"}`),
+  ];
+  if (readinessBlockers.length > 0) {
+    const decisions: DecisionPrompt[] = [];
+    writeKrowFile(decisionsRef, `${JSON.stringify(decisions, null, 2)}\n`, rootDir);
+    writeKrowFile(reportRef, reportMarkdown({
+      checkId,
+      status: "needs-review",
+      findings,
+      decisions,
+      summary: {
+        scannedFileCount: evidence.inventory.fileCount,
+        draftGlossaryTermCount: proposal.terms?.length ?? 0,
+        draftSystemDocumentCount: proposal.systemDocuments.length,
+        approvalQuestionCount: decisions.length,
+        approvalPromptCount: decisions.length,
+        meaningQuestionCount: questions.length,
+        blockingMeaningQuestionCount,
+        artifactIssueCount,
+        observedSubjectCount: proposal.subjects.length,
+        findingCount: findings.length,
+        writesOutsideKrow: false as const,
+      },
+    }, {
+      observedRef,
+      evidenceRef,
+      readingPlanRef,
+      understandingRef,
+      proposalsRef,
+      questionsRef,
+      draftRef,
+      decisionsRef,
+      proposal,
+      artifactStatuses,
+      questions,
+    }), rootDir);
+    throw new Error(`check is not ready for approval prompts: ${readinessBlockers.join("; ")}`);
+  }
+
+  const decisions = [
+    ...glossaryTermDecisionPrompts(proposal),
+    ...systemDocumentDecisionPrompts(proposal),
+  ];
   writeKrowFile(decisionsRef, `${JSON.stringify(decisions, null, 2)}\n`, rootDir);
+  writeKrowFile(reportRef, reportMarkdown({
+    checkId,
+    status: "needs-review",
+    findings,
+    decisions,
+    summary: {
+      scannedFileCount: evidence.inventory.fileCount,
+      draftGlossaryTermCount: proposal.terms?.length ?? 0,
+      draftSystemDocumentCount: proposal.systemDocuments.length,
+      approvalQuestionCount: decisions.length,
+      approvalPromptCount: decisions.length,
+      meaningQuestionCount: questions.length,
+      blockingMeaningQuestionCount,
+      artifactIssueCount,
+      observedSubjectCount: proposal.subjects.length,
+      findingCount: findings.length,
+      writesOutsideKrow: false as const,
+    },
+  }, {
+    observedRef,
+    evidenceRef,
+    readingPlanRef,
+    understandingRef,
+    proposalsRef,
+    questionsRef,
+    draftRef,
+    decisionsRef,
+    proposal,
+    artifactStatuses,
+    questions,
+  }), rootDir);
 
   return {
     checkId,
@@ -1600,6 +1977,85 @@ function appendGlossaryRows(glossary: string, documents: SystemDocumentDraft[]):
   return `${content}\n\n${sections.join("\n\n")}\n`;
 }
 
+function glossaryTermFromDecision(term: GlossaryTermDraft, answer: DecisionAnswer): GlossaryTermDraft | undefined {
+  if (answer.selectedOptionId === "reject") {
+    return undefined;
+  }
+  if (answer.selectedOptionId === "approve") {
+    return term;
+  }
+  if (answer.selectedOptionId !== "revise") {
+    return undefined;
+  }
+
+  const input = answer.customInput?.trim();
+  if (!input) {
+    return undefined;
+  }
+
+  if (input.startsWith("{")) {
+    const parsed = JSON.parse(input) as Partial<GlossaryTermDraft> & { means?: string };
+    if (parsed.id && parsed.id !== term.id) {
+      throw new Error("revise cannot change Glossary term ID; reject this decision and run check again with refined input");
+    }
+    if (parsed.sourceSubjectKey && parsed.sourceSubjectKey !== term.sourceSubjectKey) {
+      throw new Error("revise cannot change term source subject key; reject this decision and run check again with refined input");
+    }
+    return {
+      ...term,
+      ...parsed,
+      id: term.id,
+      status: "proposed",
+      title: parsed.title ?? term.title,
+      kind: parsed.kind ?? term.kind,
+      meaning: parsed.meaning ?? parsed.means ?? term.meaning,
+      aliases: parsed.aliases ?? term.aliases,
+      references: parsed.references ?? term.references,
+      sourceSubjectKey: term.sourceSubjectKey,
+    };
+  }
+
+  return {
+    ...term,
+    meaning: input,
+  };
+}
+
+function appendGlossaryTermRows(glossary: string, terms: GlossaryTermDraft[]): string {
+  if (terms.length === 0) {
+    return glossary;
+  }
+
+  let content = glossary.trimEnd() || "# Glossary";
+  const existing = new Set(glossaryTerms(content));
+  const sections = terms
+    .filter((term) => !existing.has(normalizeSearchText(term.id)) && !existing.has(normalizeSearchText(term.title)))
+    .map((term) => [
+      `## ${term.title}`,
+      "",
+      `ID: ${term.id}`,
+      `Kind: ${term.kind}`,
+      "Status: Approved",
+      "",
+      "Meaning:",
+      term.meaning,
+      "",
+      "Boundary:",
+      term.boundary ?? "Defined by approved System Documents and System Statements.",
+      "",
+      "Aliases:",
+      ...(term.aliases.length > 0 ? term.aliases.map((alias) => `- ${alias}`) : ["- (none)"]),
+      "",
+      "References:",
+      ...(term.references.length > 0 ? term.references.map((item) => `- ${item}`) : ["- (none)"]),
+    ].join("\n"));
+
+  if (sections.length === 0) {
+    return `${content}\n`;
+  }
+  return `${content}\n\n${sections.join("\n\n")}\n`;
+}
+
 function systemDocumentRef(document: SystemDocumentDraft): string {
   return `${SYSTEM_DOCS_DIR}/${document.sourceSubjectKey}.md`;
 }
@@ -1637,7 +2093,12 @@ function updateSystemMap(indexText: string, understanding: RepositoryUnderstandi
     ...markdownList(understanding.repositoryKind),
   ]);
   content = replaceMarkdownSection(content, "Entrypoints", markdownList(understanding.entrypoints));
-  content = replaceMarkdownSection(content, "Reading Order", markdownList(understanding.readingOrder));
+  content = removeEmptyMarkdownSection(content, "Reading Order");
+  content = replaceMarkdownSection(content, "Runtime Reading Order", markdownList(understanding.readingOrder.filter((ref) => !isContextDocumentRef(ref))));
+  content = replaceMarkdownSection(content, "Context Documents", markdownList(unique([
+    ...(understanding.contextDocuments ?? []),
+    ...understanding.readingOrder.filter(isContextDocumentRef),
+  ])));
   content = replaceMarkdownSection(content, "System Documents", documents.map((document) => `- ${document.id}: ${systemDocumentRef(document)}`));
   content = replaceMarkdownSection(content, "Runtime Flows", understanding.flows.map((flow) => `- ${flow.title}: ${flow.files.join(" -> ")}`));
 
@@ -1652,24 +2113,46 @@ export function applyProjectCheckDecisions(input: {
   const rootDir = path.resolve(input.rootDir ?? process.cwd());
   const checkId = normalizeCheckId(input.checkId);
   const proposal = loadProposal(checkId, rootDir);
-  const candidates = new Map<string, SystemDocumentDraft>();
-  for (const document of proposal.systemDocuments) {
-    candidates.set(`doc:${document.sourceSubjectKey}`, document);
-    candidates.set(document.id, document);
-    candidates.set(`term:${document.sourceSubjectKey}`, document);
+  const termCandidates = new Map<string, GlossaryTermDraft>();
+  for (const term of proposal.terms ?? []) {
+    termCandidates.set(termDecisionId(term), term);
+    termCandidates.set(term.id, term);
   }
-  const approved: SystemDocumentDraft[] = [];
+  const documentCandidates = new Map<string, SystemDocumentDraft>();
+  for (const document of proposal.systemDocuments) {
+    documentCandidates.set(`doc:${document.sourceSubjectKey}`, document);
+    documentCandidates.set(document.id, document);
+  }
+  const approvedTerms: GlossaryTermDraft[] = [];
+  const approvedDocuments: SystemDocumentDraft[] = [];
   const skipped: string[] = [];
 
   for (const answer of input.answers) {
-    const candidate = candidates.get(answer.decisionId);
-    if (!candidate) {
+    const termCandidate = termCandidates.get(answer.decisionId);
+    if (termCandidate) {
+      let term: GlossaryTermDraft | undefined;
+      try {
+        term = glossaryTermFromDecision(termCandidate, answer);
+      } catch (error) {
+        skipped.push(`${answer.decisionId}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      if (!term) {
+        skipped.push(`${answer.decisionId}: ${answer.selectedOptionId}`);
+        continue;
+      }
+      approvedTerms.push(term);
+      continue;
+    }
+
+    const documentCandidate = documentCandidates.get(answer.decisionId);
+    if (!documentCandidate) {
       skipped.push(`${answer.decisionId}: unknown decision id`);
       continue;
     }
     let document: SystemDocumentDraft | undefined;
     try {
-      document = systemDocumentFromDecision(candidate, answer);
+      document = systemDocumentFromDecision(documentCandidate, answer);
     } catch (error) {
       skipped.push(`${answer.decisionId}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
@@ -1678,28 +2161,35 @@ export function applyProjectCheckDecisions(input: {
       skipped.push(`${answer.decisionId}: ${answer.selectedOptionId}`);
       continue;
     }
-    approved.push(document);
+    approvedDocuments.push(document);
   }
 
   const appliedRefs: string[] = [];
-  if (approved.length > 0) {
+  if (approvedTerms.length > 0 || approvedDocuments.length > 0) {
     const glossary = loadGlossaryText(rootDir);
-    writeKrowFile(GLOSSARY_FILE, appendGlossaryRows(glossary, approved), rootDir);
-    appliedRefs.push(GLOSSARY_FILE);
+    if (approvedTerms.length > 0) {
+      writeKrowFile(GLOSSARY_FILE, appendGlossaryTermRows(glossary, approvedTerms), rootDir);
+      appliedRefs.push(GLOSSARY_FILE);
+    } else if (!proposal.terms && approvedDocuments.length > 0) {
+      writeKrowFile(GLOSSARY_FILE, appendGlossaryRows(glossary, approvedDocuments), rootDir);
+      appliedRefs.push(GLOSSARY_FILE);
+    }
 
-    const indexPath = absolutePath(SYSTEM_MAP_FILE, rootDir);
-    const indexText = existsSync(indexPath) ? readFileSync(indexPath, "utf8") : "";
-    writeKrowFile(SYSTEM_MAP_FILE, updateSystemMap(indexText, proposal.understanding, approved), rootDir);
-    appliedRefs.push(SYSTEM_MAP_FILE);
+    if (approvedDocuments.length > 0) {
+      const indexPath = absolutePath(SYSTEM_MAP_FILE, rootDir);
+      const indexText = existsSync(indexPath) ? readFileSync(indexPath, "utf8") : "";
+      writeKrowFile(SYSTEM_MAP_FILE, updateSystemMap(indexText, proposal.understanding, approvedDocuments), rootDir);
+      appliedRefs.push(SYSTEM_MAP_FILE);
 
-    for (const document of approved) {
-      const ref = systemDocumentRef(document);
-      if (existsSync(absolutePath(ref, rootDir))) {
-        skipped.push(`${ref}: already exists`);
-        continue;
+      for (const document of approvedDocuments) {
+        const ref = systemDocumentRef(document);
+        if (existsSync(absolutePath(ref, rootDir))) {
+          skipped.push(`${ref}: already exists`);
+          continue;
+        }
+        writeKrowFile(ref, systemDocumentMarkdown(document, "approved"), rootDir);
+        appliedRefs.push(ref);
       }
-      writeKrowFile(ref, systemDocumentMarkdown(document, "approved"), rootDir);
-      appliedRefs.push(ref);
     }
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "krow-cli",
-  "version": "0.3.13",
+  "version": "0.3.16",
   "description": "A document-driven workflow for coding agents",
   "type": "module",
   "bin": {
@@ -17,7 +17,6 @@
     "dev": "tsx src/cli.ts",
     "build": "tsup src/cli.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit",
-    "smoke:v2": "node scripts/smoke-v2.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

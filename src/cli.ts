@@ -1614,7 +1614,13 @@ function handleCheckDecisions(args: string[], flags: FlagMap): void {
 
   outputJSON({
     control: getLocalControlCommand("check-decisions"),
-    checkDecisions: result,
+    checkDecisions: {
+      checkId: result.checkId,
+      proposalsRef: result.proposalsRef,
+      decisionsRef: result.decisionsRef,
+      decisionCount: result.decisions.length,
+      decisionIds: result.decisions.map((decision) => decision.id),
+    },
   });
 }
 

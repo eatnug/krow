@@ -71,6 +71,10 @@ which gaps remain
 
 This keeps future checks from starting cold. A later `$check` reads the current System Map first, then confirms, revises, or extends it from fresh evidence.
 
+Initial `$check` output uses `needs-agent-draft` when code has collected evidence and created the artifact refs, but the AI-authored reading plan, understanding, proposals, and questions have not been completed yet.
+
+`clean` is reserved for a completed check state with no findings or pending draft work.
+
 ## User Input
 
 `$check` may receive user-provided context.
@@ -238,7 +242,7 @@ Output:
 proposal section in understanding.md
 ```
 
-Proposals are draft understanding. They are not approved project meaning.
+`proposals.json` should keep Glossary term drafts and System Document drafts as separate first-class proposal lists. Proposals are draft understanding. They are not approved project meaning.
 
 ### review-gaps
 
@@ -292,10 +296,16 @@ Output:
 
 ```text
 .krow/check/<check-id>/decisions.json
-decision answers stored under the check run
+decision prompts stored under the check run
 ```
 
-Questions should be bundled. The workflow should ask when meaning is unresolved, not because the workflow is early.
+Meaning questions and approval prompts are separate bundles. `questions.json` records unresolved product, ownership, and boundary questions. `decisions.json` records approve, revise, or reject prompts for draft terms and System Documents.
+
+Blocking meaning questions should be resolved before approval prompts are generated. A question can be marked nonblocking only when the proposal remains valid without that answer.
+
+Reading plan and understanding artifacts should be marked `Status: Complete` before `check-decisions` runs. This keeps stale `Draft` handoff files from looking approval-ready.
+
+Agent messages should report refs and concise counts instead of restating large bundles.
 
 ### apply-approved-understanding
 

@@ -99,6 +99,12 @@ Parse the JSON response and read these refs when present:
 
 The initial \`check.decisions\` array is normally empty. It becomes populated after proposals are written and \`check-decisions\` runs.
 
+When \`check.status\` is \`needs-agent-draft\`, the check has started but the agent-owned draft is not complete. Continue the Check Work below before reporting completion.
+
+When \`check.status\` is \`needs-review\`, inspect the refs and continue until the current missing artifact, proposal revision, or user-facing decision bundle is produced.
+
+Report \`clean\` only when the check artifacts are complete and no draft work, review issue, or approval step remains.
+
 ## Responsibility Boundary
 
 Code controls the workflow, records objective repository evidence, validates artifact shape, creates approval prompts, and applies approved updates.
@@ -111,20 +117,34 @@ User approves names, meanings, boundaries, ownership, product intent, and decisi
 
 Use the returned refs, user context, current \`.krow\` documents, and repository files as available input.
 
+Treat the whole repository as the target system. Start with a full-repository orientation, then read the entrypoints, flows, design notes, document contracts, templates, tests, and core modules deeply enough to explain current meaning. Peripheral files can be read shallowly when their role is clear, but record that boundary in the reading trace.
+
+The goal is whole-system understanding with explicit reading coverage, not a line-by-line translation of every file.
+
 Work in this order:
 
 1. Read \`evidenceRef\` and \`reportRef\`.
 2. Write \`readingPlanRef\` with the repository orientation, reading order, reading boundary, and refresh conditions.
 3. Read repository files according to the reading plan.
 4. Write \`understandingRef\` with what was read, what the software appears to mean, proposed terms/documents, and gaps.
-5. Write \`proposalsRef\` only with names, terms, statements, and references sourced from user context, repository evidence, or existing project documents.
+5. Write \`proposalsRef\` with first-class Glossary term proposals and System Document proposals. Use only names, meanings, statements, and references sourced from user context, repository evidence, or existing project documents.
 6. Write \`questionsRef\` with bundled user questions when meaning, ownership, boundary, or product intent remains unresolved.
+
+Write each artifact as soon as its step is complete. The refs are durable workflow handoff, so do not hold all reading, understanding, proposals, and questions until the end of the run.
+
+Keep code/runtime entrypoints and flows separate from Markdown context documents in the proposed repository understanding. Markdown docs can guide interpretation, but they should not be mixed into the runtime reading order.
+
+Mark the reading plan and understanding artifacts \`Status: Complete\` before running \`check-decisions\`. Leave them as \`Draft\` while they are still handoff work.
+
+Questions in \`questionsRef\` block approval prompts by default. Mark a question with \`"blocksApproval": false\` only when the proposal is still valid without that answer.
 
 When proposals are ready for user approval, set \`proposals.json\` stage to \`ready-for-approval\` and run:
 
 \`${KROW_COMMAND_PLACEHOLDER} check-decisions <check_id>\`
 
-Present the decision bundle to the user in one message. Apply explicit approve, revise, or reject decisions:
+Report the decision count and refs. The full decision bundle is already written to \`decisionsRef\`; do not restate it in the message.
+
+Apply explicit approve, revise, or reject decisions:
 
 \`${KROW_COMMAND_PLACEHOLDER} check-apply <check_id> <json|path|->\`
 

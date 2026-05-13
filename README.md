@@ -165,7 +165,6 @@ krow stop <workflowId> [reason] [--root <dir>]
 npm install
 npm run typecheck
 npm run build
-npm run smoke:v2
 ```
 
 `prepublishOnly` runs `npm run build`.
