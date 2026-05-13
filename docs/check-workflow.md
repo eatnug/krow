@@ -303,6 +303,8 @@ Meaning questions and approval prompts are separate bundles. `questions.json` re
 
 Blocking meaning questions should be resolved before approval prompts are generated. A question can be marked nonblocking only when the proposal remains valid without that answer.
 
+System Statement References should prove current behavior from source, tests, config, or runtime templates. README, docs, AGENTS, and similar Markdown files are context for product intent, planned direction, and ambiguity; they are not primary References for implemented behavior.
+
 Reading plan and understanding artifacts should be marked `Status: Complete` before `check-decisions` runs. This keeps stale `Draft` handoff files from looking approval-ready.
 
 Agent messages should report refs and concise counts instead of restating large bundles.

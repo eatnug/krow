@@ -132,6 +132,22 @@ interface CheckQuestion {
   whyItMatters?: string;
 }
 
+interface ProposalReferenceIssue {
+  targetId: string;
+  reference: string;
+  message: string;
+}
+
+interface ProposalContextReference {
+  targetId: string;
+  reference: string;
+}
+
+interface ProposalReferenceReview {
+  issues: ProposalReferenceIssue[];
+  contextReferences: ProposalContextReference[];
+}
+
 interface CheckEvidenceBundle {
   checkId: string;
   generatedAt: string;
@@ -167,6 +183,8 @@ export interface ProjectCheckResult {
     meaningQuestionCount: number;
     blockingMeaningQuestionCount: number;
     artifactIssueCount: number;
+    referenceIssueCount: number;
+    contextReferenceCount: number;
     observedSubjectCount: number;
     findingCount: number;
     writesOutsideKrow: false;
@@ -1118,6 +1136,91 @@ function pathishReference(value: string): string | undefined {
   return match?.[1];
 }
 
+function rootFileReference(value: string): string | undefined {
+  const cleaned = cleanReferenceTarget(value);
+  const match = cleaned.match(/\b((?:README|AGENTS|CLAUDE|CODEX|GEMINI|CHANGELOG)(?:\.[A-Za-z0-9_.-]+)?|(?:package(?:-lock)?|tsconfig|vite\.config|vitest\.config|jest\.config)\.[A-Za-z0-9_.-]+|Cargo\.toml|Makefile|Dockerfile)\b/);
+  return match?.[1];
+}
+
+function referencePath(value: string): string | undefined {
+  return pathishReference(value) ?? rootFileReference(value);
+}
+
+function isMarkdownContextReference(value: string): boolean {
+  const target = referencePath(value);
+  if (!target) {
+    return false;
+  }
+  const lower = target.toLowerCase();
+  if (!lower.endsWith(".md") && !lower.endsWith(".mdx")) {
+    return false;
+  }
+  if (lower.startsWith("templates/") || lower.startsWith("adapters/")) {
+    return false;
+  }
+  return lower === "readme.md"
+    || lower.startsWith("docs/")
+    || /^(agents|claude|codex|gemini)\.md$/i.test(target);
+}
+
+function isSourceEvidenceReference(value: string): boolean {
+  const target = referencePath(value);
+  if (!target) {
+    return false;
+  }
+  const lower = target.toLowerCase();
+  if (lower.startsWith(".krow/check/")) {
+    return false;
+  }
+  if (lower.startsWith("src/") || lower.startsWith("bin/") || lower.startsWith("install/")) {
+    return true;
+  }
+  if (/(^|\/)(test|tests|__tests__)\//.test(lower) || /\.(test|spec)\.[a-z0-9]+$/.test(lower)) {
+    return true;
+  }
+  if (lower.startsWith("templates/") || lower.startsWith("adapters/")) {
+    return true;
+  }
+  return /(^|\/)(package\.json|tsconfig\.json|cargo\.toml|makefile|dockerfile)$/.test(lower);
+}
+
+function allowsContextReference(statement: SystemStatementDraft, document: SystemDocumentDraft): boolean {
+  const text = normalizeSearchText(`${document.title} ${document.summary} ${statement.statement} ${statement.notes.join(" ")}`);
+  return /\b(future|planned|plan|direction|roadmap|design|documentation|readme|docs|context|framing)\b/.test(text);
+}
+
+function proposalReferenceReview(proposal: CheckProposal): ProposalReferenceReview {
+  const issues: ProposalReferenceIssue[] = [];
+  const contextReferences: ProposalContextReference[] = [];
+
+  for (const document of proposal.systemDocuments ?? []) {
+    for (const statement of document.statements ?? []) {
+      const sourceRefs = statement.references.filter(isSourceEvidenceReference);
+      if (sourceRefs.length === 0) {
+        issues.push({
+          targetId: statement.id,
+          reference: "(none)",
+          message: "System Statement needs at least one source, test, config, or template reference.",
+        });
+      }
+
+      const allowContext = allowsContextReference(statement, document);
+      for (const reference of statement.references.filter(isMarkdownContextReference)) {
+        contextReferences.push({ targetId: statement.id, reference });
+        if (!allowContext) {
+          issues.push({
+            targetId: statement.id,
+            reference,
+            message: "Move Markdown context out of System Statement References; current behavior references should point to code, tests, config, or runtime templates.",
+          });
+        }
+      }
+    }
+  }
+
+  return { issues, contextReferences };
+}
+
 function brokenReferences(rootDir: string, systemDocuments: ReturnType<typeof loadSystemDocuments>): CheckFinding[] {
   const findings: CheckFinding[] = [];
   for (const systemDocument of systemDocuments) {
@@ -1437,10 +1540,12 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
   decisionsRef: string;
   proposal: CheckProposal;
   artifactStatuses: CheckArtifactStatus[];
+  referenceReview: ProposalReferenceReview;
   questions: CheckQuestion[];
 }): string {
   const blockers = [
     ...refs.artifactStatuses.filter((status) => !status.ready).map((status) => status.issue ?? `${status.label} is not complete.`),
+    ...refs.referenceReview.issues.map((issue) => `${issue.targetId}: ${issue.message}${issue.reference === "(none)" ? "" : ` (${issue.reference})`}`),
     ...blockingQuestions(refs.questions).map((question) => `${question.id ?? "question"}: ${question.question ?? "(missing question text)"}`),
   ];
   return [
@@ -1463,6 +1568,8 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
     `- Approval prompts: ${result.summary.approvalPromptCount}`,
     `- Meaning questions: ${result.summary.blockingMeaningQuestionCount} blocking / ${result.summary.meaningQuestionCount} total`,
     `- Artifact issues: ${result.summary.artifactIssueCount}`,
+    `- Reference issues: ${result.summary.referenceIssueCount}`,
+    `- Markdown context refs in statements: ${result.summary.contextReferenceCount}`,
     `- Findings: ${result.summary.findingCount}`,
     ...(refs.proposal.about ? [`- About: ${refs.proposal.about}`] : []),
     "",
@@ -1471,10 +1578,15 @@ function reportMarkdown(result: Omit<ProjectCheckResult, "reportRef" | "observed
     ...refs.artifactStatuses.map((status) => `- ${status.label}: ${status.status} (${status.ref})`),
     `- Approval prompts: ${result.decisions.length > 0 ? `${result.decisions.length} generated` : "not generated"}`,
     `- Blocking meaning questions: ${result.summary.blockingMeaningQuestionCount}`,
+    `- Reference issues: ${result.summary.referenceIssueCount}`,
     "",
     "## Meaning Questions",
     "",
     ...meaningQuestionList(refs.questions),
+    "",
+    "## Reference Review",
+    "",
+    ...referenceReviewList(refs.referenceReview),
     "",
     "## Repository Understanding",
     "",
@@ -1574,6 +1686,23 @@ function meaningQuestionList(questions: CheckQuestion[]): string[] {
     const blocking = isBlockingQuestion(question) ? "blocking" : "nonblocking";
     return `- ${question.id ?? "(no id)"} [${blocking}, ${status}]: ${question.question ?? "(missing question text)"}`;
   });
+}
+
+function referenceReviewList(review: ProposalReferenceReview): string[] {
+  if (review.issues.length === 0 && review.contextReferences.length === 0) {
+    return ["- none"];
+  }
+
+  const lines: string[] = [];
+  if (review.issues.length > 0) {
+    lines.push("Issues:");
+    lines.push(...review.issues.map((issue) => `- ${issue.targetId}: ${issue.message}${issue.reference === "(none)" ? "" : ` (${issue.reference})`}`));
+  }
+  if (review.contextReferences.length > 0) {
+    lines.push("Markdown context references found in System Statements:");
+    lines.push(...review.contextReferences.map((item) => `- ${item.targetId}: ${item.reference}`));
+  }
+  return lines;
 }
 
 function systemDocumentDraftList(documents: SystemDocumentDraft[]): string[] {
@@ -1688,10 +1817,11 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
   const questions = loadCheckQuestions(questionsRef, rootDir);
   const artifactStatuses = checkArtifactStatuses(rootDir, { readingPlanRef, understandingRef });
   const artifactIssueCount = artifactStatuses.filter((artifact) => !artifact.ready).length;
+  const referenceReview = proposalReferenceReview(proposal);
   const blockingMeaningQuestionCount = blockingQuestions(questions).length;
   const status: ProjectCheckResult["status"] = proposal.stage === "agent-draft-required"
     ? "needs-agent-draft"
-    : findings.length > 0 || artifactIssueCount > 0 || blockingMeaningQuestionCount > 0 ? "needs-review" : "clean";
+    : findings.length > 0 || artifactIssueCount > 0 || referenceReview.issues.length > 0 || blockingMeaningQuestionCount > 0 ? "needs-review" : "clean";
   const resultWithoutRefs = {
     checkId,
     status,
@@ -1706,6 +1836,8 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
       meaningQuestionCount: questions.length,
       blockingMeaningQuestionCount,
       artifactIssueCount,
+      referenceIssueCount: referenceReview.issues.length,
+      contextReferenceCount: referenceReview.contextReferences.length,
       observedSubjectCount: proposal.subjects.length,
       findingCount: findings.length,
       writesOutsideKrow: false as const,
@@ -1723,6 +1855,7 @@ export function runProjectCheck(input: { about?: string; scope?: string; rootDir
     decisionsRef,
     proposal,
     artifactStatuses,
+    referenceReview,
     questions,
   }), rootDir);
 
@@ -1781,6 +1914,7 @@ export function buildProjectCheckDecisions(input: {
   const questions = loadCheckQuestions(questionsRef, rootDir);
   const artifactStatuses = checkArtifactStatuses(rootDir, { readingPlanRef, understandingRef });
   const artifactIssueCount = artifactStatuses.filter((artifact) => !artifact.ready).length;
+  const referenceReview = proposalReferenceReview(proposal);
   const blockingMeaningQuestionCount = blockingQuestions(questions).length;
 
   if (proposal.stage !== "ready-for-approval") {
@@ -1796,6 +1930,7 @@ export function buildProjectCheckDecisions(input: {
   const findings = currentCheckFindings(rootDir, evidence.inventory);
   const readinessBlockers = [
     ...artifactStatuses.filter((artifact) => !artifact.ready).map((artifact) => artifact.issue ?? `${artifact.label} is not complete.`),
+    ...referenceReview.issues.map((issue) => `${issue.targetId}: ${issue.message}${issue.reference === "(none)" ? "" : ` (${issue.reference})`}`),
     ...blockingQuestions(questions).map((question) => `${question.id ?? "question"}: ${question.question ?? "(missing question text)"}`),
   ];
   if (readinessBlockers.length > 0) {
@@ -1815,6 +1950,8 @@ export function buildProjectCheckDecisions(input: {
         meaningQuestionCount: questions.length,
         blockingMeaningQuestionCount,
         artifactIssueCount,
+        referenceIssueCount: referenceReview.issues.length,
+        contextReferenceCount: referenceReview.contextReferences.length,
         observedSubjectCount: proposal.subjects.length,
         findingCount: findings.length,
         writesOutsideKrow: false as const,
@@ -1830,6 +1967,7 @@ export function buildProjectCheckDecisions(input: {
       decisionsRef,
       proposal,
       artifactStatuses,
+      referenceReview,
       questions,
     }), rootDir);
     throw new Error(`check is not ready for approval prompts: ${readinessBlockers.join("; ")}`);
@@ -1854,6 +1992,8 @@ export function buildProjectCheckDecisions(input: {
       meaningQuestionCount: questions.length,
       blockingMeaningQuestionCount,
       artifactIssueCount,
+      referenceIssueCount: referenceReview.issues.length,
+      contextReferenceCount: referenceReview.contextReferences.length,
       observedSubjectCount: proposal.subjects.length,
       findingCount: findings.length,
       writesOutsideKrow: false as const,
@@ -1869,6 +2009,7 @@ export function buildProjectCheckDecisions(input: {
     decisionsRef,
     proposal,
     artifactStatuses,
+    referenceReview,
     questions,
   }), rootDir);
 

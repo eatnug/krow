@@ -127,12 +127,14 @@ Work in this order:
 2. Write \`readingPlanRef\` with the repository orientation, reading order, reading boundary, and refresh conditions.
 3. Read repository files according to the reading plan.
 4. Write \`understandingRef\` with what was read, what the software appears to mean, proposed terms/documents, and gaps.
-5. Write \`proposalsRef\` with first-class Glossary term proposals and System Document proposals. Use only names, meanings, statements, and references sourced from user context, repository evidence, or existing project documents.
+5. Write \`proposalsRef\` with first-class Glossary term proposals and System Document proposals. Use source, test, config, and runtime-template references for current behavior statements. Keep README/docs/AGENTS-style Markdown as context in the reading plan or understanding, not as System Statement References, unless the statement is explicitly about planned direction or documentation.
 6. Write \`questionsRef\` with bundled user questions when meaning, ownership, boundary, or product intent remains unresolved.
 
 Write each artifact as soon as its step is complete. The refs are durable workflow handoff, so do not hold all reading, understanding, proposals, and questions until the end of the run.
 
 Keep code/runtime entrypoints and flows separate from Markdown context documents in the proposed repository understanding. Markdown docs can guide interpretation, but they should not be mixed into the runtime reading order.
+
+Every System Statement should cite at least one source, test, config, or runtime-template reference. Current behavior statements should not cite README/docs/AGENTS-style Markdown as References; use those documents only to explain product intent, planned direction, or ambiguity in \`understandingRef\` and \`questionsRef\`.
 
 Mark the reading plan and understanding artifacts \`Status: Complete\` before running \`check-decisions\`. Leave them as \`Draft\` while they are still handoff work.
 
