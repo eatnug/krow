@@ -16,7 +16,7 @@
   "scripts": {
     "dev": "tsx src/inbound-adapters/cli/main.ts",
     "build": "tsup --entry.cli src/inbound-adapters/cli/main.ts --format esm --dts --clean",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node --test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

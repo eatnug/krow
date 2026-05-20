@@ -117,8 +117,8 @@ For the big-bang `$work` revamp, use this source-of-truth order:
 Verification source:
 
 ```text
-tests/
-  Black-box tests for packaged agent surface installation and the WorkAction runtime loop.
+src/inbound-adapters/cli/*.test.mjs
+  Co-located black-box tests for packaged agent surface installation and the WorkAction runtime loop.
 ```
 
 Conflict rule:

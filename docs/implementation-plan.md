@@ -63,8 +63,8 @@ src/domains/language/project-grounding.ts
 src/domains/documents/document-contracts.ts
   Project-language and document retrieval helpers used by check/documents paths.
 
-tests/*.test.mjs
-  Black-box runtime tests against the built CLI.
+src/inbound-adapters/cli/*.test.mjs
+  Co-located black-box runtime tests against the built CLI.
 
 install/krow.mjs
   Runs init and installs agent surfaces that call the public krow CLI.

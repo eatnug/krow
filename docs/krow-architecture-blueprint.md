@@ -116,7 +116,7 @@ src/
         task.md
         review.md
 
-tests/
+src/inbound-adapters/cli/
   init-agent-surfaces.test.mjs
   work-runtime.test.mjs
 ```
@@ -656,6 +656,6 @@ src/outbound-adapters/filesystem/work-document-renderer.ts
   -> infrastructure/templates/*
   -> outbound-adapters/filesystem/template-reader.ts
 
-tests/*.test.mjs
-  -> black-box verification of init and WorkAction runtime behavior
+src/inbound-adapters/cli/*.test.mjs
+  -> co-located black-box verification of init and WorkAction runtime behavior
 ```

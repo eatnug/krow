@@ -249,7 +249,7 @@ Terms:
 
 References:
 - implementation: src/access/access-rule.ts
-- verification: tests/daily-recommendation-access.test.ts
+- verification: src/access/access-rule.test.ts
 ```
 
 Required document fields:
@@ -306,7 +306,7 @@ References v0 uses one-line Markdown entries:
 ```md
 References:
 - implementation: src/access/access-rule.ts
-- verification: tests/daily-recommendation-access.test.ts
+- verification: src/access/access-rule.test.ts
 - interface: GET /api/recommendations/daily
 - data: db/subscriptions
 ```
