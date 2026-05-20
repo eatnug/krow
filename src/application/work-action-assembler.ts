@@ -42,6 +42,7 @@ function instructionFor(kind: WorkOutputKind, state: WorkWorkflowState): string 
         "Read the Work Docs and relevant Language System refs, inspect repository evidence as needed, then update goal.md, spec.md, and plan.md.",
         "Before depending on a drafted Goal, Spec, or Plan, resolve ambiguity that affects project language, requirements, scope, acceptance criteria, implementation direction, or verification.",
         "Express the request in the actual project language documents; when terms or map entries are missing, update the relevant Language System refs directly after the needed meaning is clear enough to draft for review.",
+        "Use Glossary for names, System Map for routing, and System Documents for behavior, responsibilities, rules, states, boundaries, and references; when project language changes, create or update a relevant .krow/system/docs/*.md document instead of stopping at glossary or map entries.",
         "Ask questions when missing project language, product meaning, scope, acceptance criteria, approval, or technical choices affect implementation or verification.",
         "Classify requirements, project language, and Goal/Spec/Plan document wording as confirmed by the user request, prior answers, or repository evidence; represent remaining gaps as open questions or missing premises.",
         "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, language, clarification, optional tasks, and optional questions.",

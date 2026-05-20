@@ -7,6 +7,7 @@ import { uniqueRefs } from "./references.js";
 export interface LanguageSystemSnapshot {
   glossary: Glossary;
   systemMap: SystemMap;
+  systemDocsRootRef?: string;
   systemDocuments: SystemDocument[];
 }
 
@@ -36,6 +37,7 @@ export class LanguageAlignmentService {
     const refs = uniqueRefs([
       input.language.glossary.ref,
       input.language.systemMap.ref,
+      input.language.systemDocsRootRef ?? "",
       ...relatedSystemDocuments,
     ]);
 
@@ -45,6 +47,9 @@ export class LanguageAlignmentService {
     }
     if (input.language.systemMap.raw.trim().length === 0) {
       gaps.push("system map has no described system areas yet");
+    }
+    if (input.language.systemDocuments.length === 0) {
+      gaps.push("system docs has no behavior or responsibility documents yet");
     }
 
     return {

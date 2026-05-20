@@ -603,6 +603,7 @@ plan
   require plan_output.language before plan_output.ready is accepted
   require plan_output.clarification before plan_output.ready is accepted
   require Goal, Spec, and Plan document agreement inside plan_output.clarification before ready is accepted
+  require a System Document ref when project language compounding would otherwise stop at Glossary or System Map
   keep ready plan_output and document agreement free of open clarification questions or missing premises
   ask for project-language and plan review when plan_output.ready is true
   next implement only after the user approves the reviewed plan
@@ -831,6 +832,7 @@ Greenfield behavior:
 Start from an empty or seed Language System.
 Use user request, repository evidence, README files, manifests, entry points, tests, and visible application structure to propose initial terms and system map entries.
 Before depending on Goal, Spec, or Plan wording, classify requirement, language, and document premises as confirmed by the user request, prior answers, or repository evidence.
+Use Glossary for names, System Map for routing, and System Documents for behavior, responsibilities, rules, states, boundaries, and references.
 Ask when meaning affects implementation, verification, project language, acceptance criteria, or scope.
 Update the actual Glossary, System Map, or System Documents during plan when the current work needs new project language, then ask the user to review those changed docs before implementation.
 ```

@@ -54,10 +54,15 @@ function approvePlan(rootDir, workflowId, planReviewAction) {
   return submitWorkflow(workflowId, planReviewAction.output.path, rootDir);
 }
 
+function systemDocRef(term) {
+  const slug = term.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "system";
+  return `.krow/system/docs/${slug}.md`;
+}
+
 function languageReview(term = "Test Behavior") {
   return {
     approved_terms: [term],
-    updated_refs: [".krow/system/glossary.md"],
+    updated_refs: [".krow/system/glossary.md", systemDocRef(term)],
     notes: [`${term} is represented in the actual project documents before implementation.`],
   };
 }
@@ -82,6 +87,11 @@ function clarificationReview(term = "Test Behavior") {
         ref: ".krow/work/runtime-test/plan.md",
         confirmed_by: [`${term} plan wording follows the user request or repository evidence.`],
       },
+      {
+        doc: "system-doc",
+        ref: systemDocRef(term),
+        confirmed_by: [`${term} durable behavior language is captured in a System Document.`],
+      },
     ],
   };
 }
@@ -90,10 +100,12 @@ function clarificationForWork(workId, term = "Test Behavior") {
   const review = clarificationReview(term);
   return {
     ...review,
-    documents: review.documents.map((doc) => ({
-      ...doc,
-      ref: `.krow/work/${workId}/${doc.doc}.md`,
-    })),
+    documents: review.documents.map((doc) => doc.doc === "system-doc"
+      ? doc
+      : {
+          ...doc,
+          ref: `.krow/work/${workId}/${doc.doc}.md`,
+        }),
   };
 }
 
@@ -117,6 +129,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
   assert.equal(planAction.output.kind, "plan_output");
   assert.ok(planAction.context.includes(".krow/work/runtime-test/goal.md"));
   assert.ok(planAction.context.includes(".krow/system/glossary.md"));
+  assert.ok(planAction.context.includes(".krow/system/docs"));
   assert.ok(existsSync(path.join(rootDir, ".krow/work/runtime-test/index.md")));
   assert.ok(existsSync(path.join(rootDir, ".krow/work/runtime-test/goal.md")));
   assert.ok(existsSync(path.join(rootDir, ".krow/work/runtime-test/spec.md")));
@@ -182,7 +195,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
   const state = JSON.parse(readFileSync(path.join(rootDir, ".krow/state/workflows/runtime-test/state.json"), "utf8"));
   assert.equal(state.phase, "review");
   assert.equal(state.status, "completed");
-  assert.deepEqual(state.language_context.refs, [".krow/system/glossary.md", ".krow/system/map.md"]);
+  assert.deepEqual(state.language_context.refs, [".krow/system/glossary.md", ".krow/system/map.md", ".krow/system/docs"]);
 });
 
 test("plan review revision returns to planning instead of implementation", () => {
@@ -410,6 +423,50 @@ test("ready plan requires clarification review before implementation review gate
   const missingDocumentAgreementFault = submitWorkflow("plan-clarification", planAction.output.path, rootDir);
   assert.equal(missingDocumentAgreementFault.type, "fault");
   assert.match(missingDocumentAgreementFault.issues.join("\n"), /must include spec, plan/);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-clarification/goal.md",
+      spec: ".krow/work/plan-clarification/spec.md",
+      plan: ".krow/work/plan-clarification/plan.md",
+    },
+    summary: "Plan stops at glossary.",
+    evidence: ["plan"],
+    language: {
+      approved_terms: ["Thin Language"],
+      updated_refs: [".krow/system/glossary.md"],
+      notes: ["The plan names a project term without a behavior document."],
+    },
+    clarification: {
+      confirmed_requirements: ["The current request needs a change."],
+      confirmed_language: ["The documents use the planned project language."],
+      documents: [
+        {
+          doc: "goal",
+          ref: ".krow/work/plan-clarification/goal.md",
+          confirmed_by: ["The goal follows the user request."],
+        },
+        {
+          doc: "spec",
+          ref: ".krow/work/plan-clarification/spec.md",
+          confirmed_by: ["The spec follows repository evidence."],
+        },
+        {
+          doc: "plan",
+          ref: ".krow/work/plan-clarification/plan.md",
+          confirmed_by: ["The plan follows repository evidence."],
+        },
+      ],
+    },
+    tasks: [],
+    questions: [],
+  });
+
+  const thinLanguageFault = submitWorkflow("plan-clarification", planAction.output.path, rootDir);
+  assert.equal(thinLanguageFault.type, "fault");
+  assert.match(thinLanguageFault.error, /system docs/);
+  assert.match(thinLanguageFault.issues.join("\n"), /cannot stop at glossary or map/);
 });
 
 test("review does not create separate language update approval artifacts", () => {

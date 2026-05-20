@@ -259,6 +259,34 @@ function readyPlanClarificationIssues(output: PlanOutput): string[] {
   return issues;
 }
 
+function systemDocRefs(output: PlanOutput): string[] {
+  return [
+    ...(output.language?.updated_refs ?? []),
+    ...(output.clarification?.documents ?? []).map((document) => document.ref),
+  ].filter((ref) => /^\.krow\/system\/docs\/.+\.md$/.test(ref));
+}
+
+function readyPlanLanguageCompoundingIssues(output: PlanOutput, state: WorkWorkflowState): string[] {
+  if (!output.ready || (output.questions?.length ?? 0) > 0) {
+    return [];
+  }
+
+  const issues: string[] = [];
+  const hasSystemDocRef = systemDocRefs(output).length > 0;
+  const gaps = state.language_context?.gaps ?? [];
+  const languageRefs = output.language?.updated_refs ?? [];
+  const updatesGlossaryOrMap = languageRefs.some((ref) => ref === ".krow/system/glossary.md" || ref === ".krow/system/map.md");
+  const hasNoSystemDocs = gaps.some((gap) => gap.includes("system docs has no"));
+
+  if (hasNoSystemDocs && !hasSystemDocRef) {
+    issues.push("ready plan_output must create or update a .krow/system/docs/*.md System Document when the Language System has no behavior or responsibility documents");
+  }
+  if (updatesGlossaryOrMap && !hasSystemDocRef) {
+    issues.push("project language compounding cannot stop at glossary or map updates; include a .krow/system/docs/*.md System Document before ready");
+  }
+  return issues;
+}
+
 function recordOutput(state: WorkWorkflowState, kind: PendingPayloadKind, path: string): WorkWorkflowState {
   return {
     ...state,
@@ -406,6 +434,17 @@ export function submitWorkPayload(state: WorkWorkflowState, payload: unknown): S
             state.workflow_id,
             "ready plan_output did not include clarification review",
             clarificationIssues,
+            true,
+          ),
+        };
+      }
+      const compoundingIssues = readyPlanLanguageCompoundingIssues(validation.value, state);
+      if (compoundingIssues.length > 0) {
+        return {
+          fault: faultAction(
+            state.workflow_id,
+            "ready plan_output did not compound project language into system docs",
+            compoundingIssues,
             true,
           ),
         };

@@ -28,6 +28,7 @@ export class FilesystemLanguageStore implements LanguageStore {
     return {
       glossary: parseGlossary(glossaryRef, readOptional(glossaryRef, rootDir)),
       systemMap: parseSystemMap(systemMapRef, readOptional(systemMapRef, rootDir)),
+      systemDocsRootRef: docsRef,
       systemDocuments,
     };
   }
