@@ -330,7 +330,21 @@ interface PlanOutput {
   summary: string;
   tasks?: PlannedTask[];
   evidence?: string[];
+  language?: PlanLanguageReview;
   questions?: Question[];
+}
+
+interface PlanLanguageReview {
+  approved_terms?: string[];
+  proposed_terms?: PlanLanguageTerm[];
+  unresolved_terms?: PlanLanguageTerm[];
+  notes?: string[];
+}
+
+interface PlanLanguageTerm {
+  term: string;
+  meaning: string;
+  evidence?: string[];
 }
 
 interface PlannedTask {
@@ -364,10 +378,13 @@ summary
 evidence
   Glossary, System Map, repository, code, test, or Work Doc refs that support the plan.
 
+language
+  Required before `ready` is true. Lists approved terms used by the plan and proposed terms that the user should review before implementation. Unresolved language gaps belong in `questions`, not in a ready plan.
+
 questions
   Product, language, use-case, or technical questions that need user input before implementation.
 
-Ready plans still require a plan-review AskAction. Repository evidence can resolve facts, but the user approves intent, scope, acceptance criteria, and implementation direction before the workflow enters implement.
+Ready plans still require a plan-review AskAction. Repository evidence can resolve facts, but the user approves project language, intent, scope, acceptance criteria, and implementation direction before the workflow enters implement.
 ```
 
 ### implement_output
@@ -565,7 +582,8 @@ Each state returns either `run`, `ask`, `done`, or `fault`.
 plan
   run plan_output
   ask when goal language, product behavior, use cases, or plan need user answer
-  ask for plan review when plan_output.ready is true
+  require plan_output.language before plan_output.ready is accepted
+  ask for project-language and plan review when plan_output.ready is true
   next implement only after the user approves the reviewed plan
 
 implement

@@ -41,9 +41,10 @@ function instructionFor(kind: WorkOutputKind, state: WorkWorkflowState): string 
         "Plan this work item before editing project files.",
         "Read the Work Docs and relevant Language System refs, inspect repository evidence as needed, then update goal.md, spec.md, and plan.md.",
         "Express the request in approved or proposed project language.",
-        "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, optional tasks, and optional questions.",
-        "Use questions only for product meaning, project language, scope, acceptance criteria, approval, or technical choices that repository evidence cannot settle.",
-        "A ready plan still goes through user review before implementation; do not treat planning as implementation approval.",
+        "Ask questions when missing project language, product meaning, scope, acceptance criteria, approval, or technical choices affect implementation or verification.",
+        "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, language, optional tasks, and optional questions.",
+        "Before ready is true, include plan_output.language with approved terms used and proposed terms that the user must review; keep unresolved language gaps in questions.",
+        "A ready plan goes through user review for project language, scope, acceptance criteria, and implementation direction before implementation.",
       ].join(" ");
     case "implement_output":
       return [

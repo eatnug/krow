@@ -198,9 +198,10 @@ startWork
   returns first RunAction with enough context for planning
 
 submit plan_output
-  stores Goal, Spec, Plan, and optional Task Graph refs
+  stores Goal, Spec, Plan, planned language, and optional Task Graph refs
   converts unresolved language questions into AskAction
-  asks the user to review a ready plan before implementation
+  requires ready plans to include approved or proposed project language
+  asks the user to review ready project language and plan before implementation
   advances to implement only after plan review approval
 
 submit answers

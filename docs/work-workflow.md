@@ -90,13 +90,14 @@ identify meaningful objects, actions, states, artifacts, roles, and boundaries
 match request language to System Map areas and System Documents
 inspect repository evidence when the Language System is empty, missing, or uncertain
 draft Goal, Spec, and Plan using approved or proposed project language
+include the approved and proposed project language in ready `plan_output`
 emit questions when accepted meaning affects implementation or verification
-send a ready plan through user review before implementation starts
+send a ready plan through project-language and scope review before implementation starts
 ```
 
 When new meaning is needed, `plan` records it in Work Docs first. Durable `.krow/system` updates are proposed later during review, after code and verification show what meaning actually landed.
 
-`plan` can organize repository evidence and propose concrete language, scope, acceptance criteria, and task boundaries. It does not approve its own interpretation. A ready plan means the plan is reviewable; implementation begins only after the user approves the planned scope or sends revisions back into planning.
+`plan` can organize repository evidence and propose concrete language, scope, acceptance criteria, and task boundaries. It does not approve its own interpretation. A ready plan means the language and plan are reviewable; implementation begins only after the user approves the planned project language and scope or sends revisions back into planning.
 
 ### implement
 

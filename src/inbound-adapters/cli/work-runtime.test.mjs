@@ -54,6 +54,16 @@ function approvePlan(rootDir, workflowId, planReviewAction) {
   return submitWorkflow(workflowId, planReviewAction.output.path, rootDir);
 }
 
+function languageReview(term = "Test Behavior") {
+  return {
+    proposed_terms: [{
+      term,
+      meaning: `${term} is the project language proposed for this work before implementation.`,
+      evidence: ["plan"],
+    }],
+  };
+}
+
 test("work runtime advances plan -> implement -> review -> done", () => {
   const rootDir = mkdtempSync(path.join(tmpdir(), "krow-work-runtime-"));
 
@@ -93,6 +103,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
     },
     summary: "Plan is ready.",
     evidence: ["test"],
+    language: languageReview(),
     tasks: [],
     questions: [],
   });
@@ -100,6 +111,8 @@ test("work runtime advances plan -> implement -> review -> done", () => {
   const planReviewAction = submitWorkflow("runtime-test", planAction.output.path, rootDir);
   assert.equal(planReviewAction.type, "ask");
   assert.match(planReviewAction.questions[0].context, /Plan is ready/);
+  assert.match(planReviewAction.questions[0].context, /Project language/);
+  assert.match(planReviewAction.questions[0].context, /Test Behavior/);
 
   const implementAction = approvePlan(rootDir, "runtime-test", planReviewAction);
   assert.equal(implementAction.type, "run");
@@ -160,6 +173,7 @@ test("plan review revision returns to planning instead of implementation", () =>
     },
     summary: "Plan needs user review.",
     evidence: ["plan"],
+    language: languageReview("Draft Behavior"),
     tasks: [{
       id: "draft",
       title: "Draft",
@@ -189,6 +203,65 @@ test("plan review revision returns to planning instead of implementation", () =>
   assert.deepEqual(state.tasks, []);
 });
 
+test("ready plan requires language review before implementation review gate", () => {
+  const rootDir = mkdtempSync(path.join(tmpdir(), "krow-plan-language-"));
+
+  runCli(["init", "--agents", "none", "--root", rootDir]);
+
+  const planAction = runJson([
+    "work",
+    "start",
+    "Clarify language before implementation",
+    "--work-id",
+    "plan-language",
+    "--root",
+    rootDir,
+    "--json",
+  ]);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-language/goal.md",
+      spec: ".krow/work/plan-language/spec.md",
+      plan: ".krow/work/plan-language/plan.md",
+    },
+    summary: "Plan skips project language.",
+    evidence: ["plan"],
+    tasks: [],
+    questions: [],
+  });
+
+  const missingLanguageFault = submitWorkflow("plan-language", planAction.output.path, rootDir);
+  assert.equal(missingLanguageFault.type, "fault");
+  assert.match(missingLanguageFault.error, /project language review/);
+  assert.match(missingLanguageFault.issues.join("\n"), /plan_output\.language is required/);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-language/goal.md",
+      spec: ".krow/work/plan-language/spec.md",
+      plan: ".krow/work/plan-language/plan.md",
+    },
+    summary: "Plan leaves language unresolved.",
+    evidence: ["plan"],
+    language: {
+      unresolved_terms: [{
+        term: "Ambiguous Behavior",
+        meaning: "The workflow still needs user clarification before implementation.",
+        evidence: ["plan"],
+      }],
+    },
+    tasks: [],
+    questions: [],
+  });
+
+  const unresolvedLanguageFault = submitWorkflow("plan-language", planAction.output.path, rootDir);
+  assert.equal(unresolvedLanguageFault.type, "fault");
+  assert.match(unresolvedLanguageFault.issues.join("\n"), /cannot include unresolved language terms/);
+});
+
 test("review language updates require approval before durable system writes", () => {
   const rootDir = mkdtempSync(path.join(tmpdir(), "krow-language-approval-"));
 
@@ -214,6 +287,7 @@ test("review language updates require approval before durable system writes", ()
     },
     summary: "Plan is ready.",
     evidence: ["src/payment.ts"],
+    language: languageReview("Payment Retry"),
     tasks: [],
     questions: [],
   });
@@ -296,6 +370,7 @@ test("task graph validation enforces ownership and exposes ready task docs", () 
     },
     summary: "Invalid overlapping plan.",
     evidence: ["plan"],
+    language: languageReview("Task Ownership"),
     tasks: [
       {
         id: "api",
@@ -329,6 +404,7 @@ test("task graph validation enforces ownership and exposes ready task docs", () 
     },
     summary: "Valid split plan.",
     evidence: ["plan"],
+    language: languageReview("Task Ownership"),
     tasks: [
       {
         id: "api",

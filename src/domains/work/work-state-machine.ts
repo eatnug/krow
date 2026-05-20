@@ -81,18 +81,54 @@ function approvalAnswerAccepted(value: string): boolean {
   return /^(approve|approved|yes|y|ok|accept|accepted|승인|네|예|ㅇㅇ|좋아)/.test(normalized);
 }
 
-function planReviewQuestion(output: PlanOutput): NonNullable<PlanOutput["questions"]> {
+function languageReviewLines(output: PlanOutput): string[] {
+  const language = output.language;
+  if (!language) {
+    return ["Project language: (not provided)"];
+  }
+
+  const termLine = (term: { term: string; meaning: string; evidence?: string[] }): string => {
+    const evidence = term.evidence?.length ? ` Evidence: ${term.evidence.join(", ")}` : "";
+    return `  - ${term.term}: ${term.meaning}${evidence}`;
+  };
+
+  const lines = ["Project language:"];
+  if (language.approved_terms?.length) {
+    lines.push(`- Approved terms used: ${language.approved_terms.join(", ")}`);
+  }
+  if (language.proposed_terms?.length) {
+    lines.push("- Proposed terms:");
+    language.proposed_terms.forEach((term) => {
+      lines.push(termLine(term));
+    });
+  }
+  if (language.unresolved_terms?.length) {
+    lines.push("- Unresolved terms:");
+    language.unresolved_terms.forEach((term) => {
+      lines.push(termLine(term));
+    });
+  }
+  if (language.notes?.length) {
+    lines.push(...language.notes.map((note) => `- ${note}`));
+  }
+  return lines;
+}
+
+function planReviewQuestion(output: PlanOutput, state: WorkWorkflowState): NonNullable<PlanOutput["questions"]> {
   const taskIds = (output.tasks ?? []).map((task) => task.id).join(", ") || "(single work item)";
+  const gaps = state.language_context?.gaps ?? [];
   return [{
     id: PLAN_REVIEW_QUESTION_ID,
-    question: "Review and approve the planned scope before implementation.",
+    question: "Review and approve the planned project language, scope, and acceptance criteria before implementation.",
     context: [
       `Summary: ${output.summary}`,
+      ...(gaps.length ? [`Language context gaps: ${gaps.join("; ")}`] : []),
+      ...languageReviewLines(output),
       `Tasks: ${taskIds}`,
       `Goal: ${output.docs.goal ?? "(not provided)"}`,
       `Spec: ${output.docs.spec ?? "(not provided)"}`,
       `Plan: ${output.docs.plan ?? "(not provided)"}`,
-      "Answer approve to proceed to implementation, or describe the revisions needed before implementation.",
+      "Answer approve only if the project language, scope, acceptance criteria, and implementation direction are correct. Otherwise describe the revisions needed before implementation.",
     ].join("\n"),
     options: ["approve", "revise"],
   }];
@@ -112,6 +148,30 @@ function planReviewAccepted(value: string): boolean {
     return false;
   }
   return approvalAnswerAccepted(value);
+}
+
+function readyPlanLanguageIssues(output: PlanOutput): string[] {
+  if (!output.ready || (output.questions?.length ?? 0) > 0) {
+    return [];
+  }
+
+  if (!output.language) {
+    return ["plan_output.language is required before ready so the user can review project language before implementation"];
+  }
+
+  const languageItemCount =
+    (output.language.approved_terms?.length ?? 0) +
+    (output.language.proposed_terms?.length ?? 0) +
+    (output.language.unresolved_terms?.length ?? 0) +
+    (output.language.notes?.length ?? 0);
+
+  if (languageItemCount === 0) {
+    return ["plan_output.language must include approved terms, proposed terms, unresolved terms, or notes before ready"];
+  }
+  if ((output.language.unresolved_terms?.length ?? 0) > 0) {
+    return ["ready plan_output cannot include unresolved language terms; ask questions or convert them into proposed terms for user review"];
+  }
+  return [];
 }
 
 function approvedLanguageUpdatesFromAnswers(
@@ -211,7 +271,7 @@ function nextAfterPlan(state: WorkWorkflowState, output: PlanOutput): WorkWorkfl
       ...state,
       tasks: plannedTasksToState(output.tasks),
     },
-    planReviewQuestion(output),
+    planReviewQuestion(output, state),
     "plan",
   );
 }
@@ -278,6 +338,17 @@ export function submitWorkPayload(state: WorkWorkflowState, payload: unknown): S
             state.workflow_id,
             "plan_output is not ready and did not include questions",
             ["provide questions that explain the missing product, language, scope, or verification decision"],
+            true,
+          ),
+        };
+      }
+      const languageIssues = readyPlanLanguageIssues(validation.value);
+      if (languageIssues.length > 0) {
+        return {
+          fault: faultAction(
+            state.workflow_id,
+            "ready plan_output did not include project language review",
+            languageIssues,
             true,
           ),
         };

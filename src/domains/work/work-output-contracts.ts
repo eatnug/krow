@@ -10,6 +10,19 @@ export interface LanguageUpdateProposal {
   refs?: string[];
 }
 
+export interface PlanLanguageTerm {
+  term: string;
+  meaning: string;
+  evidence?: string[];
+}
+
+export interface PlanLanguageReview {
+  approved_terms?: string[];
+  proposed_terms?: PlanLanguageTerm[];
+  unresolved_terms?: PlanLanguageTerm[];
+  notes?: string[];
+}
+
 export interface PlanOutput {
   ready: boolean;
   docs: {
@@ -21,6 +34,7 @@ export interface PlanOutput {
   summary: string;
   tasks?: PlannedTask[];
   evidence?: string[];
+  language?: PlanLanguageReview;
   questions?: Question[];
 }
 
@@ -185,6 +199,54 @@ function validatePlannedTasks(value: unknown): string[] {
   return issues;
 }
 
+function validateLanguageTerms(value: unknown, path: string): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return [`${path} must be an array when present`];
+  }
+
+  const issues: string[] = [];
+  value.forEach((item, index) => {
+    const itemPath = `${path}[${index}]`;
+    if (!isRecord(item)) {
+      issues.push(`${itemPath} must be an object`);
+      return;
+    }
+    if (!isNonEmptyString(item.term)) {
+      issues.push(`${itemPath}.term must be a non-empty string`);
+    }
+    if (!isNonEmptyString(item.meaning)) {
+      issues.push(`${itemPath}.meaning must be a non-empty string`);
+    }
+    if (item.evidence !== undefined && !isStringArray(item.evidence)) {
+      issues.push(`${itemPath}.evidence must be an array of non-empty strings when present`);
+    }
+  });
+  return issues;
+}
+
+function validatePlanLanguage(value: unknown): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isRecord(value)) {
+    return ["language must be an object when present"];
+  }
+
+  const issues: string[] = [];
+  if (value.approved_terms !== undefined && !isStringArray(value.approved_terms)) {
+    issues.push("language.approved_terms must be an array of non-empty strings when present");
+  }
+  if (value.notes !== undefined && !isStringArray(value.notes)) {
+    issues.push("language.notes must be an array of non-empty strings when present");
+  }
+  issues.push(...validateLanguageTerms(value.proposed_terms, "language.proposed_terms"));
+  issues.push(...validateLanguageTerms(value.unresolved_terms, "language.unresolved_terms"));
+  return issues;
+}
+
 export function validatePlanOutput(value: unknown): ContractValidationResult<PlanOutput> {
   if (!isRecord(value)) {
     return { ok: false, issues: ["plan_output must be an object"] };
@@ -209,6 +271,7 @@ export function validatePlanOutput(value: unknown): ContractValidationResult<Pla
   if (value.evidence !== undefined && !isStringArray(value.evidence)) {
     issues.push("evidence must be an array of non-empty strings when present");
   }
+  issues.push(...validatePlanLanguage(value.language));
   issues.push(...validateQuestions(value.questions, "questions"));
   issues.push(...validatePlannedTasks(value.tasks));
 
