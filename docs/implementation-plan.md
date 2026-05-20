@@ -167,7 +167,6 @@ Optional files:
 ```text
 tasks/index.md
 tasks/<task-id>.md
-language-updates.md
 ```
 
 ## Milestone 1: Document And Template Alignment
@@ -332,10 +331,9 @@ Required behavior:
 ```text
 plan loads relevant Glossary, System Map, System Document, and repo evidence refs.
 plan can emit Questions for missing terms, aliases, boundaries, use cases, or acceptance criteria.
+plan updates actual Glossary, System Map, or System Document refs when the current work needs new project language.
 implement can record code compatibility issues discovered while changing files.
-review can propose Glossary, System Map, and System Document updates.
-review can ask for approval before durable language writes.
-approved durable language updates write through LanguageStore.
+review verifies that implementation still matches the approved language refs and records remaining issues.
 ```
 
 Repository modes:
@@ -343,13 +341,13 @@ Repository modes:
 ```text
 greenfield initialize
   init creates empty or seed language files.
-  first work proposes initial terms and map entries from request plus evidence.
+  first work writes initial terms and map entries needed by the request plus evidence.
 
 greenfield compounding
-  later work reuses approved terms and commits reusable new meaning during review.
+  later work reuses approved terms and updates reusable new meaning before implementation review.
 
 brownfield initialize
-  first work reads repository evidence and proposes only language needed for the current work.
+  first work reads repository evidence and writes only language needed for the current work.
 
 brownfield compounding
   existing .krow/system is the approved language contract.
@@ -360,8 +358,8 @@ Done when:
 
 ```text
 plan WorkAction.context includes only relevant language refs.
-review_output.language_updates can produce a language-updates.md artifact.
-approved updates can be applied to .krow/system files.
+ready plan_output requires a language review summary with changed language refs.
+plan review asks the user to approve the actual changed docs before implement.
 ```
 
 ## Milestone 5: CLI And Agent Surface

@@ -56,11 +56,9 @@ function approvePlan(rootDir, workflowId, planReviewAction) {
 
 function languageReview(term = "Test Behavior") {
   return {
-    proposed_terms: [{
-      term,
-      meaning: `${term} is the project language proposed for this work before implementation.`,
-      evidence: ["plan"],
-    }],
+    approved_terms: [term],
+    updated_refs: [".krow/system/glossary.md"],
+    notes: [`${term} is represented in the actual project documents before implementation.`],
   };
 }
 
@@ -113,6 +111,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
   assert.match(planReviewAction.questions[0].context, /Plan is ready/);
   assert.match(planReviewAction.questions[0].context, /Project language/);
   assert.match(planReviewAction.questions[0].context, /Test Behavior/);
+  assert.match(planReviewAction.questions[0].context, /Updated language refs/);
 
   const implementAction = approvePlan(rootDir, "runtime-test", planReviewAction);
   assert.equal(implementAction.type, "run");
@@ -134,7 +133,6 @@ test("work runtime advances plan -> implement -> review -> done", () => {
     summary: "Review passed.",
     evidence: ["test"],
     issues: [],
-    language_updates: [],
     questions: [],
   });
 
@@ -262,8 +260,8 @@ test("ready plan requires language review before implementation review gate", ()
   assert.match(unresolvedLanguageFault.issues.join("\n"), /cannot include unresolved language terms/);
 });
 
-test("review language updates require approval before durable system writes", () => {
-  const rootDir = mkdtempSync(path.join(tmpdir(), "krow-language-approval-"));
+test("review does not create separate language update approval artifacts", () => {
+  const rootDir = mkdtempSync(path.join(tmpdir(), "krow-language-doc-review-"));
 
   runCli(["init", "--agents", "none", "--root", rootDir]);
 
@@ -272,7 +270,7 @@ test("review language updates require approval before durable system writes", ()
     "start",
     "Name payment retry behavior",
     "--work-id",
-    "language-approval",
+    "language-doc-review",
     "--root",
     rootDir,
     "--json",
@@ -281,9 +279,9 @@ test("review language updates require approval before durable system writes", ()
   writeJson(rootDir, planAction.output.path, {
     ready: true,
     docs: {
-      goal: ".krow/work/language-approval/goal.md",
-      spec: ".krow/work/language-approval/spec.md",
-      plan: ".krow/work/language-approval/plan.md",
+      goal: ".krow/work/language-doc-review/goal.md",
+      spec: ".krow/work/language-doc-review/spec.md",
+      plan: ".krow/work/language-doc-review/plan.md",
     },
     summary: "Plan is ready.",
     evidence: ["src/payment.ts"],
@@ -292,8 +290,8 @@ test("review language updates require approval before durable system writes", ()
     questions: [],
   });
 
-  const planReviewAction = submitWorkflow("language-approval", planAction.output.path, rootDir);
-  const implementAction = approvePlan(rootDir, "language-approval", planReviewAction);
+  const planReviewAction = submitWorkflow("language-doc-review", planAction.output.path, rootDir);
+  const implementAction = approvePlan(rootDir, "language-doc-review", planReviewAction);
 
   writeJson(rootDir, implementAction.output.path, {
     summary: "Implementation completed.",
@@ -302,47 +300,21 @@ test("review language updates require approval before durable system writes", ()
     questions: [],
   });
 
-  const reviewAction = submitWorkflow("language-approval", implementAction.output.path, rootDir);
+  const reviewAction = submitWorkflow("language-doc-review", implementAction.output.path, rootDir);
 
   writeJson(rootDir, reviewAction.output.path, {
     passed: true,
     summary: "Review passed.",
-    evidence: ["npm test"],
+    evidence: ["npm test", ".krow/system/glossary.md"],
     issues: [],
-    language_updates: [{
-      kind: "term",
-      title: "Payment Retry",
-      summary: "Payment Retry is the approved project term for retrying failed payment attempts.",
-      evidence: ["src/payment.ts"],
-    }],
     questions: [],
   });
 
-  const approvalAction = submitWorkflow("language-approval", reviewAction.output.path, rootDir);
-  assert.equal(approvalAction.type, "ask");
-  assert.equal(approvalAction.questions[0].id, "language-update-1");
-  assert.ok(existsSync(path.join(rootDir, ".krow/work/language-approval/language-updates.md")));
-  assert.ok(existsSync(path.join(rootDir, ".krow/system/language-update-proposals.md")));
-  assert.doesNotMatch(readFileSync(path.join(rootDir, ".krow/system/glossary.md"), "utf8"), /Payment Retry/);
-
-  writeJson(rootDir, approvalAction.output.path, {
-    answers: [{
-      question_id: "language-update-1",
-      answer: "approve",
-    }],
-  });
-
-  const doneAction = submitWorkflow("language-approval", approvalAction.output.path, rootDir);
+  const doneAction = submitWorkflow("language-doc-review", reviewAction.output.path, rootDir);
   assert.equal(doneAction.type, "done");
   assert.equal(doneAction.status, "completed");
-
-  const glossary = readFileSync(path.join(rootDir, ".krow/system/glossary.md"), "utf8");
-  assert.match(glossary, /## Payment Retry/);
-  assert.match(glossary, /Status: Approved/);
-  assert.match(glossary, /src\/payment\.ts/);
-
-  const state = JSON.parse(readFileSync(path.join(rootDir, ".krow/state/workflows/language-approval/state.json"), "utf8"));
-  assert.deepEqual(state.language_update_refs, [".krow/system/glossary.md"]);
+  assert.equal(existsSync(path.join(rootDir, ".krow/work/language-doc-review/language-updates.md")), false);
+  assert.equal(existsSync(path.join(rootDir, ".krow/system/language-update-proposals.md")), false);
 });
 
 test("task graph validation enforces ownership and exposes ready task docs", () => {

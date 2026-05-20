@@ -50,7 +50,6 @@ Optional documents appear only when needed:
 tasks/
   index.md
   <task-id>.md
-language-updates.md
 ```
 
 Document roles:
@@ -69,7 +68,7 @@ Task
   One narrow execution unit with dependencies, scope, ownership, and expected output.
 
 Review
-  Verification result, evidence, issues, and proposed Language System updates.
+  Verification result, evidence, issues, and changed language refs when relevant.
 ```
 
 Small work keeps the same files short. Large work adds tasks only when the implementation needs explicit dependency or ownership boundaries.
@@ -89,13 +88,13 @@ interpret the user request through approved Glossary terms
 identify meaningful objects, actions, states, artifacts, roles, and boundaries
 match request language to System Map areas and System Documents
 inspect repository evidence when the Language System is empty, missing, or uncertain
-draft Goal, Spec, and Plan using approved or proposed project language
-include the approved and proposed project language in ready `plan_output`
+draft Goal, Spec, and Plan using approved project language and direct updates to actual Language System docs when new terms or map entries are needed
+include approved terms and changed language refs in ready `plan_output`
 emit questions when accepted meaning affects implementation or verification
 send a ready plan through project-language and scope review before implementation starts
 ```
 
-When new meaning is needed, `plan` records it in Work Docs first. Durable `.krow/system` updates are proposed later during review, after code and verification show what meaning actually landed.
+When new reusable meaning is needed for the current work, `plan` updates the actual `.krow/system` docs before implementation depends on it. The plan-review AskAction points the user at those changed docs; rejection sends the workflow back to planning so the same docs can be revised.
 
 `plan` can organize repository evidence and propose concrete language, scope, acceptance criteria, and task boundaries. It does not approve its own interpretation. A ready plan means the language and plan are reviewable; implementation begins only after the user approves the planned project language and scope or sends revisions back into planning.
 
@@ -124,12 +123,11 @@ It should:
 verify that Spec use cases and acceptance criteria are satisfied
 verify that code/tests/docs still map to the Goal and Glossary terms
 identify changed responsibilities, entry points, states, or workflows
-propose Glossary, System Map, or System Document updates when reusable meaning changed
-ask for user approval when language updates require judgment
-apply approved durable updates through LanguageStore
+verify that relevant Glossary, System Map, and System Document refs are already current or listed as remaining issues
+ask questions when review discovers language meaning that cannot be settled from evidence
 ```
 
-Review is the normal point where Work Docs compound back into the repository Language System.
+Review records whether the approved language and implementation still match. New language meaning discovered during review returns to questions or follow-up planning instead of creating a separate language-update approval bundle.
 
 ## Language Lifecycle By Repository State
 
@@ -147,7 +145,7 @@ The same workflow works across repository states because krow stores language as
 
 It also installs agent surfaces. It does not invent product meaning during init.
 
-The first `$work` run reads the user request and any existing repository files, then proposes the initial project language inside Goal, Spec, Plan, and questions. Approved durable language updates are written during review.
+The first `$work` run reads the user request and any existing repository files, then writes the initial project language into Goal, Spec, Plan, and the actual Language System docs needed for the work. Those docs are reviewed before implementation.
 
 ### Greenfield compounding
 
@@ -160,7 +158,7 @@ reuse approved terms before proposing new ones
 extend the System Map when new entry points, areas, workflows, or conventions appear
 create System Documents when behavior or responsibility becomes reusable
 keep one-off implementation notes inside the Work Item
-commit only reusable approved meaning into `.krow/system`
+keep only reusable reviewed meaning in `.krow/system`
 ```
 
 This makes each completed work item improve the next one without requiring a separate language setup phase.
@@ -190,7 +188,7 @@ The workflow should:
 prefer existing Glossary terms and System Map entries
 record aliases when user language and code language refer to the same accepted meaning
 surface conflicts when code, docs, and approved language disagree
-propose targeted System Document updates when touched behavior or responsibilities changed
+update targeted System Documents when touched behavior or responsibilities changed
 leave unrelated stale areas alone unless they affect the current work
 ```
 

@@ -11,6 +11,10 @@ Each work step is WorkAction -> agent work -> submitted output.
 
 Read the returned context refs and the current instruction. Gather repository evidence when it is needed for the requested output. Ask the user when the missing context is a product meaning decision, approval, scope decision, or externally unknowable fact.
 
+When work changes project language, plans, specs, glossary, maps, or other durable project documents, edit the actual target refs directly. Use the existing files such as `goal.md`, `spec.md`, `plan.md`, `.krow/system/glossary.md`, and `.krow/system/map.md` as the review surface. The user-facing loop is: update the actual document, ask for review, continue on approval, revise the same document on rejection or redirection.
+
+Treat proposal-shaped runner terms as internal compatibility words. Do not create separate user-facing documents such as `plan_proposal`, `glossary_proposal`, or language-update approval bundles when the actual target document exists.
+
 ## Loop
 
 For each response:

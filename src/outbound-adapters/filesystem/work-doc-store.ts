@@ -3,10 +3,8 @@ import path from "node:path";
 import type { WorkDocStore } from "../../outbound-ports/work-doc-store.js";
 import type { TemplateReader } from "../../outbound-ports/template-reader.js";
 import type { PlannedTask } from "../../domains/work/task-graph.js";
-import type { LanguageUpdateProposal } from "../../domains/work/work-output-contracts.js";
 import { createWorkDocuments } from "./work-document-renderer.js";
 import { absolutePath } from "./krow-paths.js";
-
 function markdownList(items: string[], empty = "(none)"): string[] {
   return items.length === 0 ? [`- ${empty}`] : items.map((item) => `- ${item}`);
 }
@@ -81,28 +79,4 @@ export class FilesystemWorkDocStore implements WorkDocStore {
     }
   }
 
-  writeLanguageUpdates(workRoot: string, updates: LanguageUpdateProposal[], rootDir = process.cwd()): void {
-    if (updates.length === 0) {
-      return;
-    }
-
-    const lines = [
-      "# Language Updates",
-      "",
-      "These proposals become durable Language System updates after user approval.",
-      "",
-    ];
-    updates.forEach((update, index) => {
-      lines.push(`## ${index + 1}. ${update.kind}`);
-      lines.push("");
-      lines.push(`Summary: ${update.summary}`);
-      lines.push(`Target: ${update.target ?? "(new)"}`);
-      lines.push("");
-      lines.push("Evidence:");
-      lines.push(...markdownList(update.evidence ?? []));
-      lines.push("");
-    });
-
-    writeText(`${workRoot}/language-updates.md`, lines.join("\n"), rootDir);
-  }
 }

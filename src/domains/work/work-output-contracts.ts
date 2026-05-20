@@ -1,15 +1,6 @@
 import type { Answer, AnswerPayload, Question } from "./questions.js";
 import type { PlannedTask } from "./task-graph.js";
 
-export interface LanguageUpdateProposal {
-  kind: "term" | "system-map" | "system-document";
-  title?: string;
-  summary: string;
-  target?: string;
-  evidence?: string[];
-  refs?: string[];
-}
-
 export interface PlanLanguageTerm {
   term: string;
   meaning: string;
@@ -18,7 +9,7 @@ export interface PlanLanguageTerm {
 
 export interface PlanLanguageReview {
   approved_terms?: string[];
-  proposed_terms?: PlanLanguageTerm[];
+  updated_refs?: string[];
   unresolved_terms?: PlanLanguageTerm[];
   notes?: string[];
 }
@@ -51,7 +42,6 @@ export interface ReviewOutput {
   summary: string;
   evidence?: string[];
   issues?: string[];
-  language_updates?: LanguageUpdateProposal[];
   questions?: Question[];
 }
 
@@ -239,10 +229,12 @@ function validatePlanLanguage(value: unknown): string[] {
   if (value.approved_terms !== undefined && !isStringArray(value.approved_terms)) {
     issues.push("language.approved_terms must be an array of non-empty strings when present");
   }
+  if (value.updated_refs !== undefined && !isStringArray(value.updated_refs)) {
+    issues.push("language.updated_refs must be an array of non-empty strings when present");
+  }
   if (value.notes !== undefined && !isStringArray(value.notes)) {
     issues.push("language.notes must be an array of non-empty strings when present");
   }
-  issues.push(...validateLanguageTerms(value.proposed_terms, "language.proposed_terms"));
   issues.push(...validateLanguageTerms(value.unresolved_terms, "language.unresolved_terms"));
   return issues;
 }
@@ -322,37 +314,6 @@ export function validateReviewOutput(value: unknown): ContractValidationResult<R
   }
   if (value.issues !== undefined && !isStringArray(value.issues)) {
     issues.push("issues must be an array of non-empty strings when present");
-  }
-  if (value.language_updates !== undefined) {
-    if (!Array.isArray(value.language_updates)) {
-      issues.push("language_updates must be an array when present");
-    } else {
-      value.language_updates.forEach((update, index) => {
-        const path = `language_updates[${index}]`;
-        if (!isRecord(update)) {
-          issues.push(`${path} must be an object`);
-          return;
-        }
-        if (update.kind !== "term" && update.kind !== "system-map" && update.kind !== "system-document") {
-          issues.push(`${path}.kind must be term, system-map, or system-document`);
-        }
-        if (update.title !== undefined && !isNonEmptyString(update.title)) {
-          issues.push(`${path}.title must be a non-empty string when present`);
-        }
-        if (!isNonEmptyString(update.summary)) {
-          issues.push(`${path}.summary must be a non-empty string`);
-        }
-        if (update.target !== undefined && !isNonEmptyString(update.target)) {
-          issues.push(`${path}.target must be a non-empty string when present`);
-        }
-        if (update.evidence !== undefined && !isStringArray(update.evidence)) {
-          issues.push(`${path}.evidence must be an array of non-empty strings when present`);
-        }
-        if (update.refs !== undefined && !isStringArray(update.refs)) {
-          issues.push(`${path}.refs must be an array of non-empty strings when present`);
-        }
-      });
-    }
   }
   issues.push(...validateQuestions(value.questions, "questions"));
 

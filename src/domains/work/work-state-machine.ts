@@ -6,7 +6,6 @@ import {
   validateImplementOutput,
   validatePlanOutput,
   validateReviewOutput,
-  type LanguageUpdateProposal,
   type ImplementOutput,
   type PlanOutput,
   type ReviewOutput,
@@ -60,19 +59,6 @@ function withAsk(state: WorkWorkflowState, questions: PlanOutput["questions"], p
   };
 }
 
-function languageApprovalQuestions(updates: LanguageUpdateProposal[]): PlanOutput["questions"] {
-  return updates.map((update, index) => ({
-    id: `language-update-${index + 1}`,
-    question: `Approve durable ${update.kind} update "${update.title ?? update.target ?? update.summary}"?`,
-    context: [
-      update.summary,
-      ...(update.evidence?.length ? [`Evidence: ${update.evidence.join(", ")}`] : []),
-      ...(update.refs?.length ? [`Refs: ${update.refs.join(", ")}`] : []),
-    ].join("\n"),
-    options: ["approve", "reject"],
-  }));
-}
-
 function approvalAnswerAccepted(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (/^(reject|rejected|no|n|skip|decline|denied|deny|거절|아니|ㄴㄴ)/.test(normalized)) {
@@ -96,11 +82,8 @@ function languageReviewLines(output: PlanOutput): string[] {
   if (language.approved_terms?.length) {
     lines.push(`- Approved terms used: ${language.approved_terms.join(", ")}`);
   }
-  if (language.proposed_terms?.length) {
-    lines.push("- Proposed terms:");
-    language.proposed_terms.forEach((term) => {
-      lines.push(termLine(term));
-    });
+  if (language.updated_refs?.length) {
+    lines.push(`- Updated language refs: ${language.updated_refs.join(", ")}`);
   }
   if (language.unresolved_terms?.length) {
     lines.push("- Unresolved terms:");
@@ -161,27 +144,17 @@ function readyPlanLanguageIssues(output: PlanOutput): string[] {
 
   const languageItemCount =
     (output.language.approved_terms?.length ?? 0) +
-    (output.language.proposed_terms?.length ?? 0) +
+    (output.language.updated_refs?.length ?? 0) +
     (output.language.unresolved_terms?.length ?? 0) +
     (output.language.notes?.length ?? 0);
 
   if (languageItemCount === 0) {
-    return ["plan_output.language must include approved terms, proposed terms, unresolved terms, or notes before ready"];
+    return ["plan_output.language must include approved terms, updated refs, unresolved terms, or notes before ready"];
   }
   if ((output.language.unresolved_terms?.length ?? 0) > 0) {
-    return ["ready plan_output cannot include unresolved language terms; ask questions or convert them into proposed terms for user review"];
+    return ["ready plan_output cannot include unresolved language terms; ask questions or update the actual language docs for user review"];
   }
   return [];
-}
-
-function approvedLanguageUpdatesFromAnswers(
-  updates: LanguageUpdateProposal[] | undefined,
-  answers: { question_id: string; answer: string }[],
-): LanguageUpdateProposal[] {
-  return (updates ?? []).filter((_, index) => {
-    const answer = answers.find((item) => item.question_id === `language-update-${index + 1}`);
-    return answer ? approvalAnswerAccepted(answer.answer) : false;
-  });
 }
 
 function recordOutput(state: WorkWorkflowState, kind: PendingPayloadKind, path: string): WorkWorkflowState {
@@ -207,19 +180,6 @@ function completedState(state: WorkWorkflowState, output: ReviewOutput): WorkWor
     current: undefined,
     pending_questions: [],
     risks: output.issues ?? [],
-    updated_at: nowIso(),
-  };
-}
-
-function completedAfterLanguageApproval(state: WorkWorkflowState): WorkWorkflowState {
-  return {
-    ...state,
-    status: "completed",
-    phase: "review",
-    current: undefined,
-    pending_questions: [],
-    pending_language_updates: [],
-    risks: state.pending_review_result?.issues ?? state.risks ?? [],
     updated_at: nowIso(),
   };
 }
@@ -286,22 +246,6 @@ function nextAfterImplement(state: WorkWorkflowState, output: ImplementOutput): 
 function nextAfterReview(state: WorkWorkflowState, output: ReviewOutput): WorkWorkflowState {
   if ((output.questions?.length ?? 0) > 0) {
     return withAsk(state, output.questions, "review");
-  }
-  if (output.passed && (output.language_updates?.length ?? 0) > 0) {
-    return withAsk(
-      {
-        ...state,
-        pending_language_updates: output.language_updates,
-        pending_review_result: {
-          passed: output.passed,
-          summary: output.summary,
-          evidence: output.evidence,
-          issues: output.issues,
-        },
-      },
-      languageApprovalQuestions(output.language_updates ?? []),
-      "review",
-    );
   }
   if (output.passed) {
     return completedState(state, output);
@@ -416,21 +360,6 @@ export function submitWorkPayload(state: WorkWorkflowState, payload: unknown): S
             "plan",
             "plan_output",
           ),
-        };
-      }
-      if (
-        state.phase === "review" &&
-        state.pending_review_result?.passed &&
-        (state.pending_language_updates?.length ?? 0) > 0
-      ) {
-        return {
-          state: completedAfterLanguageApproval({
-            ...recorded,
-            approved_language_updates: approvedLanguageUpdatesFromAnswers(
-              state.pending_language_updates,
-              validation.value.answers,
-            ),
-          }),
         };
       }
       const nextKind =

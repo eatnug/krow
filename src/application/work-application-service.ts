@@ -4,7 +4,6 @@ import { submitWorkPayload, stopWorkState } from "../domains/work/work-state-mac
 import type { WorkAction } from "../domains/work/work-action.js";
 import type { PlannedTask } from "../domains/work/task-graph.js";
 import type { WorkWorkflowState, RuntimeSession } from "../domains/work/workflow-state.js";
-import type { LanguageUpdateProposal } from "../domains/work/work-output-contracts.js";
 import { LanguageAlignmentService } from "../domains/language/language-alignment-service.js";
 import type {
   StartWorkInput,
@@ -82,12 +81,6 @@ function tasksFromPayload(payload: unknown): PlannedTask[] {
     : [];
 }
 
-function languageUpdatesFromPayload(payload: unknown): LanguageUpdateProposal[] {
-  return payload && typeof payload === "object" && Array.isArray((payload as { language_updates?: unknown }).language_updates)
-    ? ((payload as { language_updates: LanguageUpdateProposal[] }).language_updates)
-    : [];
-}
-
 export class WorkApplicationService implements WorkUseCases {
   constructor(private readonly dependencies: WorkApplicationServiceDependencies) {}
 
@@ -132,21 +125,6 @@ export class WorkApplicationService implements WorkUseCases {
 
     if (pendingKind === "plan_output") {
       this.dependencies.workDocStore.writeTaskDocs(result.state.refs.work_root, tasksFromPayload(input.payload), rootDir(input.rootDir));
-    }
-    if (pendingKind === "review_output") {
-      const languageUpdates = languageUpdatesFromPayload(input.payload);
-      this.dependencies.workDocStore.writeLanguageUpdates(
-        result.state.refs.work_root,
-        languageUpdates,
-        rootDir(input.rootDir),
-      );
-      this.dependencies.languageStore.appendLanguageUpdateProposals(languageUpdates, rootDir(input.rootDir));
-    }
-    if (pendingKind === "answers" && (result.state.approved_language_updates?.length ?? 0) > 0) {
-      result.state.language_update_refs = this.dependencies.languageStore.applyApprovedLanguageUpdates(
-        result.state.approved_language_updates ?? [],
-        rootDir(input.rootDir),
-      );
     }
 
     this.dependencies.workflowStateStore.save(result.state, rootDir(input.rootDir));

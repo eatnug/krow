@@ -336,7 +336,7 @@ interface PlanOutput {
 
 interface PlanLanguageReview {
   approved_terms?: string[];
-  proposed_terms?: PlanLanguageTerm[];
+  updated_refs?: string[];
   unresolved_terms?: PlanLanguageTerm[];
   notes?: string[];
 }
@@ -379,7 +379,7 @@ evidence
   Glossary, System Map, repository, code, test, or Work Doc refs that support the plan.
 
 language
-  Required before `ready` is true. Lists approved terms used by the plan and proposed terms that the user should review before implementation. Unresolved language gaps belong in `questions`, not in a ready plan.
+  Required before `ready` is true. Lists approved terms used by the plan and actual Work or Language System refs updated for user review before implementation. Unresolved language gaps belong in `questions`, not in a ready plan.
 
 questions
   Product, language, use-case, or technical questions that need user input before implementation.
@@ -423,7 +423,6 @@ interface ReviewOutput {
   summary: string;
   evidence?: string[];
   issues?: string[];
-  language_updates?: LanguageUpdateProposal[];
   questions?: Question[];
 }
 ```
@@ -449,8 +448,6 @@ issues
 questions
   User questions raised by unresolved product meaning, approval needs, or review judgment.
 
-language_updates
-  Proposed Glossary, System Map, or System Document updates. Passing review with language updates returns an approval AskAction before durable `.krow/system` writes.
 ```
 
 Decision:
@@ -633,7 +630,6 @@ Expandable docs:
 tasks/
   <task-id>.md
 tasks/index.md
-language-updates.md
 ```
 
 Decision:
@@ -642,7 +638,6 @@ Decision:
 Create goal.md, spec.md, plan.md, and review.md as separate files for every work item.
 Keep each file short when the work is small.
 Create task docs only when plan defines multiple implementation tasks.
-Create language-updates.md only when review proposes durable language changes.
 Express Work Docs in the approved project language.
 ```
 
@@ -812,7 +807,7 @@ Greenfield behavior:
 Start from an empty or seed Language System.
 Use user request, repository evidence, README files, manifests, entry points, tests, and visible application structure to propose initial terms and system map entries.
 Ask when meaning affects implementation or verification.
-Commit only approved durable language updates during review.
+Update the actual Glossary, System Map, or System Documents during plan when the current work needs new project language, then ask the user to review those changed docs before implementation.
 ```
 
 Brownfield behavior:
@@ -821,32 +816,19 @@ Brownfield behavior:
 Use existing Glossary, System Map, and System Documents as the default language.
 Interpret the user request through approved terms first.
 Ask only for missing meaning, conflicts, aliases, or code compatibility gaps.
-Commit only changed or newly clarified reusable meaning during review.
-```
-
-Language proposal shape:
-
-```ts
-interface LanguageUpdateProposal {
-  kind: "term" | "system-map" | "system-document";
-  title?: string;
-  summary: string;
-  target?: string;
-  evidence?: string[];
-  refs?: string[];
-}
+Update the actual Language System docs only for changed or newly clarified reusable meaning that affects the current work.
 ```
 
 Decision:
 
 ```text
-AI identifies language gaps and drafts proposals.
-krow stores proposals, asks for approval when needed, and applies approved updates through LanguageStore.
+AI identifies language gaps and updates the actual project language documents.
+krow stores deterministic document refs and asks for user review before implementation depends on changed language.
 Language Domain remains a peer of Work Domain.
 Language alignment is part of plan and review rather than a separate first phase.
 Use the Language System to express Goal, Spec, Plan, Tasks, Review, and user-facing questions.
-Treat code compatibility as an explicit proposal or review issue when code names and approved language diverge.
-Read language during plan, ask language questions through AskAction, and commit durable language updates during review.
+Treat code compatibility as an explicit document update, question, or review issue when code names and approved language diverge.
+Read language during plan, ask language questions through AskAction, update actual docs, and review those docs with the user before implementation.
 ```
 
 ## 10. Error And Recoverability Rules

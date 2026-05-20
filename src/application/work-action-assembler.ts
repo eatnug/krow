@@ -40,11 +40,11 @@ function instructionFor(kind: WorkOutputKind, state: WorkWorkflowState): string 
       return [
         "Plan this work item before editing project files.",
         "Read the Work Docs and relevant Language System refs, inspect repository evidence as needed, then update goal.md, spec.md, and plan.md.",
-        "Express the request in approved or proposed project language.",
+        "Express the request in the actual project language documents; when terms or map entries are missing, update the relevant Language System refs directly.",
         "Ask questions when missing project language, product meaning, scope, acceptance criteria, approval, or technical choices affect implementation or verification.",
         "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, language, optional tasks, and optional questions.",
-        "Before ready is true, include plan_output.language with approved terms used and proposed terms that the user must review; keep unresolved language gaps in questions.",
-        "A ready plan goes through user review for project language, scope, acceptance criteria, and implementation direction before implementation.",
+        "Before ready is true, update the actual docs and include plan_output.language as a review summary of terms used, document changes made, unresolved terms, or notes.",
+        "A ready plan goes through user review of the changed docs for project language, scope, acceptance criteria, and implementation direction before implementation.",
       ].join(" ");
     case "implement_output":
       return [
@@ -57,8 +57,8 @@ function instructionFor(kind: WorkOutputKind, state: WorkWorkflowState): string 
     case "review_output":
       return [
         "Review the implemented result against the Goal, Spec, Plan, and approved project language.",
-        "Verify behavior with proportionate checks, record evidence and issues, and propose durable Language System updates when reusable meaning changed.",
-        "Write review_output JSON to the requested output path with passed, summary, evidence, issues, language_updates, and optional questions.",
+        "Verify behavior with proportionate checks, record evidence and issues, and raise questions when language meaning needs user judgment.",
+        "Write review_output JSON to the requested output path with passed, summary, evidence, issues, and optional questions.",
       ].join(" ");
   }
 }

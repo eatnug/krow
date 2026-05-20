@@ -200,8 +200,8 @@ startWork
 submit plan_output
   stores Goal, Spec, Plan, planned language, and optional Task Graph refs
   converts unresolved language questions into AskAction
-  requires ready plans to include approved or proposed project language
-  asks the user to review ready project language and plan before implementation
+  requires ready plans to include approved terms and actual language refs updated for review
+  asks the user to review changed project language docs and plan before implementation
   advances to implement only after plan review approval
 
 submit answers
@@ -214,9 +214,7 @@ submit implement_output
 
 submit review_output
   stores review evidence
-  asks for approval when language updates require judgment
-  applies approved language updates through LanguageStore
-  returns DoneAction when verification and language handling are complete
+  returns DoneAction when verification is complete or routes issues back to implementation
 ```
 
 ### domains
@@ -266,11 +264,8 @@ detectLanguageGaps
 draftLanguageQuestions
   turns unresolved meaning into Question values for AskAction.
 
-proposeLanguageUpdates
-  drafts Glossary, System Map, and System Document updates during review.
-
-applyApprovedLanguageUpdates
-  writes approved durable language updates through LanguageStore.
+language document updates
+  happen in the actual Glossary, System Map, and System Document refs before implementation depends on them.
 ```
 
 Agent surface installation starts as an application concern. It can become a domain later only if it gains durable product rules beyond rendering and installing agent files.
@@ -440,7 +435,6 @@ krow work stop
         index.md
         <task-id>.md
       review.md
-      language-updates.md
 
   state/
     workflows/
