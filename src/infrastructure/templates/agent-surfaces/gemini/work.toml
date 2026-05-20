@@ -1,0 +1,9 @@
+# {{MANAGED_MARKER}}
+
+description = "Create Work Docs and run actionable engineering work through krow."
+
+prompt = """
+Use {{args}} as the request.
+
+{{WORK_LOOP}}
+"""

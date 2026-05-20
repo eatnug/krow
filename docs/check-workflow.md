@@ -92,7 +92,7 @@ collect-evidence
   -> trace-code
   -> draft-understanding
   -> review-gaps
-  -> gate-user when meaning needs approval
+  -> ask-user when meaning needs approval
   -> apply-approved-understanding
   -> report
 ```
@@ -273,7 +273,7 @@ Output:
 gap section in result.md
 ```
 
-### gate-user
+### ask-user
 
 Owner: User, prompted by AI and recorded by Code.
 

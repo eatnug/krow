@@ -12,6 +12,7 @@ Use stable ids for important units:
 
 ```text
 Glossary Term
+System Map Entry
 System Document
 System Statement
 Work Doc
@@ -25,6 +26,7 @@ Examples:
 
 ```text
 TERM:user.free
+MAP:access
 DOC:daily-recommendation-access
 STMT:daily-recommendation-access.001
 WORK:free-user-daily-recommendation
@@ -96,11 +98,82 @@ Approved
 Deprecated
 ```
 
-## System Model
+## Language System
 
-System Model is the current software description written with Glossary terms.
+The Language System is the repository's durable agreement about product and software meaning.
 
-It is not a line-by-line natural language translation of code. It describes implemented meaning: behavior, rules, states, interfaces, responsibilities, and important boundaries.
+It has three source document groups:
+
+```text
+.krow/system/glossary.md
+  Approved project vocabulary for meaningful software concepts.
+
+.krow/system/map.md
+  Repository-wide System Map of entry points, areas, workflows, conventions, and System Documents.
+
+.krow/system/docs/*.md
+  Focused System Documents that describe behavior, responsibilities, boundaries, and code references.
+```
+
+The Language System is not a line-by-line natural language translation of code. It describes implemented meaning: behavior, rules, states, interfaces, responsibilities, and important boundaries.
+
+## System Map
+
+System Map is the current repository-wide software map written with Glossary terms.
+
+It helps a coding agent choose where to inspect first without hard-coding one framework, team structure, or repository layout.
+
+System Map entries should cover:
+
+```text
+entry points
+applications or packages
+major responsibility areas
+important workflows
+shared conventions
+links to System Documents
+```
+
+System Map v0 shape:
+
+```md
+## Access
+
+ID: MAP:access
+Status: Approved
+
+Summary:
+Access decisions for user-visible capabilities.
+
+Entry Points:
+- src/access/access-rule.ts
+
+System Documents:
+- DOC:daily-recommendation-access
+
+Notes:
+Subscription state is the main evidence source for current access behavior.
+```
+
+Required fields:
+
+```text
+ID
+Status
+Summary
+```
+
+Optional fields:
+
+```text
+Entry Points
+System Documents
+Notes
+```
+
+## System Meaning
+
+System meaning is written in Glossary terms and System Documents.
 
 Good statements:
 

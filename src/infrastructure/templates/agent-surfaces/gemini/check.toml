@@ -1,0 +1,9 @@
+# {{MANAGED_MARKER}}
+
+description = "Check repository evidence against krow project understanding."
+
+prompt = """
+Use {{args}} as the user seed.
+
+{{CHECK_LOOP}}
+"""

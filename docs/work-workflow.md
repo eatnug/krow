@@ -2,11 +2,15 @@
 
 Previous: [Check Workflow](check-workflow.md). Next: [Runtime And Agents](runtime-and-agents.md).
 
-`$work` executes code and test changes using Glossary and System Model as starting context.
+`$work` turns a user request into project-language documents, code/test changes, verification evidence, and approved Language System updates.
 
-## Project Understanding During Work
+The workflow has three runtime states:
 
-`$work` can start even when the project understanding is incomplete.
+```text
+plan -> implement -> review
+```
+
+`plan` is where most user conversation happens. `implement` and `review` should usually run with less conversation because the meaning, expected behavior, and technical plan are already captured.
 
 ## Input Contract
 
@@ -14,205 +18,211 @@ Previous: [Check Workflow](check-workflow.md). Next: [Runtime And Agents](runtim
 
 ```text
 input
-  user request, current project understanding, relevant Work Docs, and repository evidence available to inspect
+  user request, Language System, relevant Work Docs, and repository evidence available to inspect
 
 operation
-  clarify the exact execution edge, update Work Docs as needed, change code/tests, and verify the result
+  express the request in project language, define expected behavior, plan implementation, change code/tests, and verify
 
 output
-  updated Work Docs, source/test changes, verification evidence, and proposed Glossary/System Model updates when meaning changed
+  Work Docs, source/test/config/docs changes, verification evidence, and approved Language System updates when meaning changed
 ```
 
-Each step declares what output it must produce. The agent decides which context is needed for that output, reads the existing refs first, and gathers additional source, tests, config, logs, errors, routes, commands, symbols, or prior Work Docs when needed.
+The coding agent reads the provided context first, then gathers only the repository evidence needed for the current action. Evidence can include source, tests, config, manifests, logs, routes, commands, symbols, docs, prior Work Docs, and existing `.krow/system` files.
 
-When needed context is missing, the agent first tries to obtain it from repository evidence. It asks the user when the missing context is a product meaning decision, approval, acceptance criterion, ownership decision, or external fact that cannot be known from code.
+When context is missing, the agent first tries to resolve it from repository evidence. It asks the user when the missing context is product meaning, accepted terminology, scope, acceptance criteria, ownership, approval, or an external fact that code cannot settle.
 
-The first runnable step is still clarification. During that step, the agent should identify whether the request depends on:
+## Work Docs
 
-```text
-new Glossary terms
-new aliases or boundaries
-new System Documents
-changed System Statements
-unclear references
-```
-
-When meaning is missing or ambiguous, `$work` records proposed language or system-model updates and asks for approval before implementation depends on them.
-
-`$check` is the broader alignment route. It is useful before work starts, but it is not required before every `$work` request.
-
-Work Docs can reference Glossary terms or System Documents when that relationship is known. They should not contain placeholder relationships.
-
-## Work Doc Structure
-
-Every work item is a folder:
+Every Work Item gets the same document shape:
 
 ```text
 .krow/work/<work-id>/
   index.md
-  prd.md
+  goal.md
   spec.md
   plan.md
-  tasks/
-    task-001.md
   review.md
 ```
 
-Small work uses the same shape but keeps unnecessary files short.
-
-## Work Docs
+Optional documents appear only when needed:
 
 ```text
-PRD
-  Why the change matters.
+tasks/
+  index.md
+  <task-id>.md
+language-updates.md
+```
+
+Document roles:
+
+```text
+Goal
+  Project-language statement of what the user wants and why.
 
 Spec
-  What must be true after the change.
+  Use cases, expected behavior, boundaries, and acceptance criteria.
 
 Plan
-  How the Spec will be implemented.
+  Implementation approach, affected areas, task split, and verification strategy.
 
 Task
-  One narrow code/test execution unit.
+  One narrow execution unit with dependencies, scope, ownership, and expected output.
 
 Review
-  Verification record after Tasks are complete.
+  Verification result, evidence, issues, and proposed Language System updates.
 ```
 
-PRD may include User Stories when user-facing intent needs a narrative. User Stories are PRD content, not a separate artifact family.
+Small work keeps the same files short. Large work adds tasks only when the implementation needs explicit dependency or ownership boundaries.
 
-Spec should define desired behavior, rules, state changes, acceptance criteria, and test-shaped examples. Implementation belongs in Plan.
+## Language System During Work
 
-Plan should define implementation approach, affected System Documents, task split, and verification strategy. Plan does not change Spec behavior.
+Language alignment is not a separate workflow phase. It is a domain capability used by `plan`, `implement`, and `review`.
 
-## Splitting
+### plan
 
-Large work should split by meaning and behavior first, then by executable Tasks.
+`plan` loads relevant Language System refs and repository evidence.
 
-Default relationship:
+It should:
 
 ```text
-PRD slice : Spec = 1:1
-Spec : Plan = 1:1
-Plan : Task = 1:N
+interpret the user request through approved Glossary terms
+identify meaningful objects, actions, states, artifacts, roles, and boundaries
+match request language to System Map areas and System Documents
+inspect repository evidence when the Language System is empty, missing, or uncertain
+draft Goal, Spec, and Plan using approved or proposed project language
+emit questions when accepted meaning affects implementation or verification
 ```
 
-Split flow:
+When new meaning is needed, `plan` records it in Work Docs first. Durable `.krow/system` updates are proposed later during review, after code and verification show what meaning actually landed.
+
+### implement
+
+`implement` consumes Goal, Spec, Plan, Language System refs, and task docs.
+
+It should:
 
 ```text
-large product intent
-  -> one PRD or PRD slices
-  -> one Spec per PRD slice
-  -> one Plan per Spec
-  -> executable Tasks
-  -> Review
+use the planned project language while editing code, tests, config, and docs
+keep task-local changes aligned with the assigned scope
+record new questions when implementation reveals a real meaning gap
+record code compatibility issues when code names and approved language diverge
 ```
 
-If a Plan becomes large, split it into Tasks first. Split the Plan only when implementation judgment itself becomes unclear.
+Implementation can discover language issues, but it should not invent durable project language silently. It records the issue and lets the workflow ask or review.
 
-Split into multiple PRDs only when:
+### review
+
+`review` checks the result against the agreed language and behavior.
+
+It should:
 
 ```text
-the product goals are different
-the approvers are different
-the release timing is different
-the success criteria are independent
-reading them together makes judgment less clear
+verify that Spec use cases and acceptance criteria are satisfied
+verify that code/tests/docs still map to the Goal and Glossary terms
+identify changed responsibilities, entry points, states, or workflows
+propose Glossary, System Map, or System Document updates when reusable meaning changed
+ask for user approval when language updates require judgment
+apply approved durable updates through LanguageStore
 ```
 
-If one PRD slice seems to need multiple Specs, first check whether the PRD slice is still too large.
+Review is the normal point where Work Docs compound back into the repository Language System.
 
-Split Specs when:
+## Language Lifecycle By Repository State
+
+The same workflow works across repository states because krow stores language as evidence-backed project documents rather than framework-specific rules.
+
+### Greenfield initialize
+
+`krow init` creates an empty or seed Language System:
 
 ```text
-behavior rules can be verified independently
-user flows or system flows are different
-different System Documents are central
-test strategy differs
-one Spec has too many acceptance criteria
+.krow/system/glossary.md
+.krow/system/map.md
+.krow/system/docs/
 ```
 
-Split Plans when:
+It also installs agent surfaces. It does not invent product meaning during init.
+
+The first `$work` run reads the user request and any existing repository files, then proposes the initial project language inside Goal, Spec, Plan, and questions. Approved durable language updates are written during review.
+
+### Greenfield compounding
+
+Later `$work` runs read the accumulated Glossary, System Map, System Documents, and prior Work Docs.
+
+The workflow should:
 
 ```text
-implementation areas are independent
-work order or release order differs
-risk and verification differ
-one Plan makes implementation review less clear
+reuse approved terms before proposing new ones
+extend the System Map when new entry points, areas, workflows, or conventions appear
+create System Documents when behavior or responsibility becomes reusable
+keep one-off implementation notes inside the Work Item
+commit only reusable approved meaning into `.krow/system`
 ```
 
-Good Tasks:
+This makes each completed work item improve the next one without requiring a separate language setup phase.
+
+### Brownfield initialize
+
+In an existing repository with no `.krow/system`, `krow init` still only creates the workspace and agent surfaces.
+
+The first `$work` plan treats the repository as evidence:
 
 ```text
-have one narrow goal
-have clear code/test scope
-can be verified independently
-can be reviewed independently
+read manifests, package layout, entry points, tests, README files, config, routes, commands, and visible app structure
+infer candidate responsibility areas and entry points from code evidence
+use external documentation only when repository evidence shows a framework or tool whose behavior affects the work
+ask the user when product meaning, accepted naming, ownership, or compatibility cannot be settled from code
 ```
 
-Task documents should carry enough execution context for one worker:
+The initial Language System is built from the first useful work instead of from a broad upfront audit.
+
+### Brownfield compounding
+
+When a brownfield repository already has `.krow/system`, `$work` treats it as the approved language contract.
+
+The workflow should:
 
 ```text
-task id
-purpose
-related Spec or Plan
-dependencies
-owned files or responsibility boundary
-required context documents
-expected code/test changes
-verification criteria
-result location
+prefer existing Glossary terms and System Map entries
+record aliases when user language and code language refer to the same accepted meaning
+surface conflicts when code, docs, and approved language disagree
+propose targeted System Document updates when touched behavior or responsibilities changed
+leave unrelated stale areas alone unless they affect the current work
 ```
 
 ## Task Scheduling
 
-The runner can parallelize ready Tasks only when the Plan establishes that it is safe.
+Large work can split into a task graph during `plan`.
 
-Deterministic task scheduling rules:
-
-```text
-each Task has a stable id
-each Task declares dependencies
-each Task declares owned files or responsibility boundaries
-each Task declares required context documents
-each Task declares expected output documents and code/test changes
-the runner computes ready Tasks from dependencies
-parallel Tasks must have disjoint ownership or an explicit merge plan
-integration Tasks run after their dependencies complete
-```
-
-If parallel workers are unavailable, the same ready Tasks run serially in deterministic order.
-
-## Default Work Flow
+Good tasks:
 
 ```text
-intake
-  -> load-glossary-and-system-docs
-  -> write-or-update-work-docs
-  -> clarify-terms-or-scope when needed
-  -> plan-tasks
-  -> execute-task
-  -> verify-task
-  -> review-work
-  -> update-system-model
-  -> report
+have one narrow goal
+declare dependencies
+declare owned files or responsibility boundaries
+carry required context refs
+define expected output and verification
+can be reviewed independently
 ```
 
-Code and tests are changed inside `execute-task`. `review-work` checks completed task results against Work Docs, Glossary, System Model, and verification evidence.
+The runner can parallelize ready tasks when dependencies and ownership boundaries show that the tasks are independent. If parallel workers are unavailable, the same ready tasks run serially in deterministic order.
+
+Parallelism is an execution optimization. It does not change `plan -> implement -> review`.
 
 ## Review
 
 Review checks:
 
 ```text
-Spec or compact expected behavior was satisfied
-tests passed or skipped checks are explained
-changed code still maps to Glossary terms
-related System Documents are current
-new terms, aliases, or boundaries were recorded when needed
-remaining gaps or risks are explicit
+Goal is still represented by the result
+Spec use cases and expected behavior are satisfied
+planned tests or proportionate checks passed
+skipped checks are explained
+changed code still maps to approved or proposed project language
+related System Map and System Documents are current enough for the changed meaning
+remaining issues and risks are explicit
 ```
 
-Review is not the coding step. It is the verification record the next worker can trust.
+Review is not the coding step. It is the verification record and language-compounding point the next worker can trust.
 
 Next: [Runtime And Agents](runtime-and-agents.md).

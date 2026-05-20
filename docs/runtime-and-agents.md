@@ -2,13 +2,25 @@
 
 Previous: [Work Workflow](work-workflow.md). Next: [Implementation Plan](implementation-plan.md).
 
-krow uses a deterministic runner plus thin agent adapters.
+krow uses a deterministic CLI runtime plus thin installed agent surfaces.
+
+The user talks to a coding agent. The coding agent talks to krow through CLI commands. krow owns workflow state and returns `WorkAction` values that tell the coding agent the next valid move.
+
+```text
+User
+  -> Coding Agent
+  -> Installed Agent Surface
+  -> krow CLI Runtime
+  -> WorkAction
+  -> Coding Agent
+  -> User or repository tools
+```
 
 ## Init
 
-`krow init` is deterministic bootstrap only.
+`krow init` is deterministic setup.
 
-It creates:
+It creates or maintains:
 
 ```text
 .krow/system/glossary.md
@@ -16,17 +28,14 @@ It creates:
 .krow/system/docs/
 .krow/work/
 .krow/state/workflows/
-.codex/skills/check/SKILL.md
 .codex/skills/work/SKILL.md
-.claude/commands/check.md
 .claude/commands/work.md
-.gemini/commands/check.toml
 .gemini/commands/work.toml
 ```
 
-It does not analyze code, interview the user, create project meaning, or edit root always-loaded instruction files such as `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
+It does not analyze code, interview the user, invent project meaning, or edit root always-loaded instruction files such as `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
 
-`krow init` does not create project-local `.krow/templates/` by default. Canonical document templates live inside the installed krow package and are rendered by commands when needed. A future export or override command can expose templates for advanced customization without making every project manage template version drift.
+`krow init` does not create project-local `.krow/templates/` by default. Canonical document and agent-surface templates live inside the installed krow package and are rendered by commands when needed.
 
 Agent surface selection:
 
@@ -42,17 +51,84 @@ krow init --agents codex,claude
 krow init --agents none
 ```
 
-`krow init` should not prompt by default. Interactive setup can be added later, but the default command remains scriptable and deterministic.
-
 After init, the CLI prints next steps:
 
 ```text
 Open your coding agent.
-Run $check to create or refresh project understanding.
-Run $work <request> when you want to change code using krow.
+Run $work <request> when you want krow to guide a change.
 ```
 
-`$work` reports whether approved Glossary terms and System Documents already exist. Missing understanding does not block Work Doc creation; it makes the first clarify step responsible for proposing or approving the needed project language before implementation depends on it.
+## Installed Agent Surface
+
+The installed agent surface is a small generated instruction file for each coding agent.
+
+It should say, in agent-native form:
+
+```text
+When the user invokes $work, start krow:
+
+  npx --yes krow-cli@latest work start "<request>" --json
+
+Then follow each returned WorkAction until done or fault.
+Run WorkAction.submit exactly as provided.
+```
+
+The installed surface contains mechanics, not workflow policy. Workflow order, state transitions, output validation, and Language System updates live in the krow runtime.
+
+## Runtime Protocol Commands
+
+The installed surface drives these commands:
+
+```text
+krow work start "<request>" --json
+  Create or load Work Docs and WorkflowState, then return the first WorkAction.
+
+krow work submit <workflow-id> --input <payload.json> --json
+  Submit the payload expected by the current WorkflowState and return the next WorkAction.
+
+krow work next <workflow-id> --json
+  Return the current WorkAction without changing state.
+
+krow work status <workflow-id> --json
+  Return a read-only status view.
+
+krow work stop <workflow-id> [reason] --json
+  Mark the workflow stopped and return a terminal WorkAction.
+```
+
+The command printed in `WorkAction.submit` is authoritative. The coding agent follows it instead of reconstructing a command.
+
+## WorkAction Loop
+
+krow returns four action types:
+
+```text
+run
+  Coding agent performs one autonomous unit and writes the requested output payload.
+
+ask
+  Coding agent asks the user the bundled questions and writes an answer payload.
+
+done
+  Workflow reached completed, blocked, or stopped status.
+
+fault
+  Runtime state or submitted payload is invalid.
+```
+
+Loop:
+
+```text
+krow returns WorkAction
+coding agent performs that action
+coding agent writes payload when required
+coding agent runs WorkAction.submit
+krow validates payload against current WorkflowState
+krow advances state
+krow returns next WorkAction
+```
+
+The coding agent never chooses the next state. It can gather evidence, implement code, run checks, ask the user through `ask`, and report results, but krow owns the workflow transition.
 
 ## Workflow State
 
@@ -61,198 +137,97 @@ Workflow state is filesystem-backed:
 ```text
 .krow/state/workflows/<workflow-id>/
   state.json
-  steps/
-    <step-id>.json
   artifacts/
 ```
 
-`state.json` is the small current-state pointer.
+`state.json` is the small current-state pointer. Large scan results, payloads, reports, answer bundles, and logs live under `artifacts/`.
 
-`steps/<step-id>.json` records step-local inputs, outputs, validation status, and artifact refs.
-
-Large scan results, reports, proposed updates, and logs live under `artifacts/`.
-
-Agents should read `state.json`, the current step file, and only the referenced artifacts needed for the current step.
-
-## Internal CLI
-
-```text
-krow work <request>
-  Create Work Docs, create workflow state, and emit the first signal.
-
-krow start <message> --intent work
-  Create workflow state directly when Work Docs already exist or an adapter needs the lower-level control surface.
-
-krow status <workflow-id>
-  Read current workflow state.
-
-krow next <workflow-id>
-  Emit the next run/gate/done/fault signal from current state.
-
-krow submit-phase <workflow-id> <phase> <payload>
-  Submit structured output for the current step.
-
-krow submit-decisions <workflow-id> <decision-payload>
-  Submit user decisions for a gate.
-
-krow stop <workflow-id> [reason]
-  Mark workflow stopped.
-
-krow resume <workflow-id>
-  Alias for reading state and emitting next.
-```
-
-The runner emits four signal types:
-
-```text
-run
-  Agent can perform the next deterministic step.
-
-gate
-  User decision is required.
-
-done
-  Workflow reached terminal success or blocked state.
-
-fault
-  Runtime state or submitted payload is invalid.
-```
-
-Deterministic execution rule:
-
-```text
-The agent never chooses the next step.
-The runner emits the current step.
-The agent reads the required context and writes the required output.
-The runner validates the submitted payload.
-Only valid payloads advance state.
-```
-
-## Step Contract
-
-Each workflow step has:
-
-```text
-Purpose
-Inputs
-Agent Focus
-Outputs
-Gate Conditions
-```
-
-Step Contracts should give the agent only what it needs for the current step. They should avoid unrelated background, broad history, and unnecessary prohibition lists.
-
-## Step Input Contract
-
-Every agent-facing skill should make the current step contract clear.
-
-```text
-Needed Input
-  Information required before the step can be done correctly.
-
-Available Context
-  Files, refs, state, user seed, task packet, code evidence, or prior decisions already available.
-
-Missing Context
-  Facts, scope, decisions, evidence, or verification surfaces still needed.
-
-Context Action
-  Read existing refs, inspect the repository, run a safe check, or ask the user.
-
-Output
-  The structured payload, file, or command submission that moves the workflow forward.
-```
-
-The agent should fill missing context when it can do so from repository evidence. It should ask the user when the missing context is a product meaning decision, approval, or externally unknowable fact.
+The coding agent can read state refs when a `WorkAction` includes them, but it advances the workflow only by submitting the required payload.
 
 ## Code AI User Boundary
 
-Agent workflows split ownership this way:
+Workflow ownership:
 
 ```text
-Code
-  Runs the deterministic state machine, gathers objective evidence, validates output shape, stores artifacts, and applies approved updates.
+krow runtime
+  Owns deterministic state, current action selection, payload validation, artifact storage, and approved Language System writes.
 
-AI
-  Reads evidence, interprets software meaning, plans what to inspect next, drafts project-language documents, and explains gaps.
+Coding agent
+  Reads evidence, interprets software meaning, plans inspections, drafts Work Docs, edits code/tests/docs, runs checks, and writes required payloads.
 
 User
-  Approves names, meanings, boundaries, ownership, product intent, and other decisions that repository evidence cannot settle.
+  Provides product intent, accepts names and meanings, resolves scope, approves choices that code cannot settle, and judges unresolved tradeoffs.
 ```
 
-For `$check`, this means the runner can collect repository material and store artifacts, while the agent writes the reading plan and understanding from the evidence it actually reads.
-
-This shape applies to `$check`, `$work`, and future skills. The specific inputs differ, but the loop stays the same:
+Conversation that affects workflow state enters through `AskAction`:
 
 ```text
-know what is needed
-  -> gather or ask for what is missing
-  -> produce the required output
-  -> submit through the runner
+krow returns AskAction
+coding agent asks the user
+user answers in chat
+coding agent writes Answer payload
+coding agent submits it
+krow stores the answers
+next RunAction folds accepted answers into Work Docs or review
 ```
 
-## Agent Invocation Contract
+Normal progress updates and final reports can remain plain chat. Product meaning, language approval, acceptance criteria, and externally unknowable decisions should become `Question` and `Answer` artifacts.
 
-The runner turns each runnable step into a minimal file-based invocation:
+## Language Runtime Behavior
+
+The Language System is loaded and changed through the same WorkAction loop.
 
 ```text
-id
-purpose
-context
-output
-submit
+plan RunAction
+  includes relevant Glossary, System Map, System Document, and repository refs.
+  may return questions for missing or conflicting meaning.
+
+ask AskAction
+  collects user answers for names, boundaries, use cases, acceptance criteria, or approval.
+
+implement RunAction
+  uses agreed language and records compatibility issues discovered while changing code.
+
+review RunAction
+  verifies code against Work Docs and proposes durable Language System updates.
+
+review AskAction
+  asks for approval when durable language updates require user judgment.
+
+done DoneAction
+  reports changed files, evidence, language updates, and remaining risks.
 ```
 
-Example:
-
-```json
-{
-  "id": "invoke-task-001",
-  "purpose": "Implement Task TASK:free-user-access.001.",
-  "context": [
-    ".krow/work/free-user-access/spec.md",
-    ".krow/work/free-user-access/tasks/task-001.md",
-    ".krow/system/glossary.md",
-    ".krow/system/docs/daily-recommendation-access.md"
-  ],
-  "output": ".krow/state/workflows/work-20260512-001/artifacts/task-001-result.json",
-  "submit": "krow submit-phase work-20260512-001 execute .krow/state/workflows/work-20260512-001/artifacts/task-001-result.json"
-}
-```
-
-Scope, ownership, acceptance criteria, and verification details live in referenced context documents instead of being duplicated into every invocation.
+This keeps language compounding inside normal work instead of requiring a separate setup phase.
 
 ## Agent Adapters
 
-krow standardizes the file-based Agent Invocation Contract, not native tool calling.
+Codex, Claude, and Gemini surfaces render the same runtime protocol into each agent's supported skill or command shape.
 
-Codex, Claude, and Gemini adapters translate the same invocation into the best supported surface for each coding agent.
-
-Agent command surfaces should be generated from shared adapter templates so the behavior stays aligned across coding agents. Agent-specific files contain invocation mechanics, not workflow logic.
-
-Adapters may change:
+Adapters may vary:
 
 ```text
 prompt formatting
-command entrypoint
-tool-use instructions
+agent-native command trigger
+tool-use wording
 subagent or worker strategy
 result submission mechanics
 ```
 
-Adapters should not change:
+Adapters keep the same:
 
 ```text
-workflow step order
-step purpose
+runtime command
+WorkAction loop
 context refs
 output path
 submit command
+workflow order
 meaning decisions
 ```
 
-If an agent runtime supports parallel workers, the adapter may execute ready independent invocations in parallel. If it does not, it should execute the same ready invocations serially in deterministic order.
+If an agent runtime supports parallel workers, the adapter may execute ready independent tasks in parallel when the Plan and task graph establish disjoint ownership. If it does not, the same tasks run serially in deterministic order.
 
-Parallelism is an execution optimization, not a different workflow. The runner still owns task readiness, dependency order, output collection, validation, and integration.
+Parallelism is an execution optimization. The runner still owns readiness, dependency order, output collection, validation, and integration.
 
 Next: [Implementation Plan](implementation-plan.md).

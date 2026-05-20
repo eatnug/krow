@@ -37,21 +37,20 @@ Work Docs are stored under:
 ```text
 .krow/work/<work-id>/
   index.md
-  prd.md
+  goal.md
   spec.md
   plan.md
-  tasks/
   review.md
 ```
 
 The intended loop is:
 
 ```text
-Glossary + System Model
+Glossary + System Map
   -> Work Docs
-  -> Tasks update Code / Tests
+  -> Code / Tests
   -> Review
-  -> proposed Glossary/System Model updates when meaning changed
+  -> proposed Glossary/System Map updates when meaning changed
 ```
 
 ## Brownfield Check
@@ -62,7 +61,7 @@ Use `$check` later when krow is added to an existing codebase.
 $check about: React app. Free and paid subscription states control feature access.
 ```
 
-It runs a repository understanding session: collect evidence, write a reading plan, trace code, draft understanding, identify gaps, and apply only approved Glossary/System Model updates.
+It runs a repository understanding session: collect evidence, write a reading plan, trace code, draft understanding, identify gaps, and apply only approved Glossary/System Map updates.
 
 ## Document Shape
 
@@ -121,7 +120,7 @@ References:
   behavior, rules, structures, and responsibilities
 
 .krow/work/<work-id>/
-  PRD, Spec, Plan, Task, and Review for a change
+  Goal, Spec, Plan, optional Tasks, and Review for a change
 
 .krow/check/<check-id>/
   evidence, reading plan, understanding drafts, decisions, and report
@@ -131,10 +130,10 @@ Design notes live in [docs/](docs/).
 
 ## Runtime
 
-krow uses a deterministic runner with machine-readable signals:
+krow uses a deterministic runner with machine-readable WorkActions:
 
 - `run`: execute the current autonomous unit
-- `gate`: user or lead input is required
+- `ask`: user input is required
 - `done`: workflow reached a terminal state
 - `fault`: runtime state or submitted payload is invalid
 
@@ -147,16 +146,13 @@ krow init [--agents <all|none|codex|claude|gemini>] [--root <dir>] [--force]
 krow check [description] [--about <text>] [--scope <path>] [--root <dir>]
 krow check-decisions <checkId> [--root <dir>]
 krow check-apply <checkId> <json|path|-> [--root <dir>]
-krow work <request> [--root <dir>] [--work-id <id>]
+krow work start <request> [--root <dir>] [--work-id <id>] [--json]
+krow work submit <workflowId> --input <json|path|-> [--root <dir>] [--json]
+krow work next <workflowId> [--root <dir>] [--json]
+krow work status <workflowId> [--root <dir>] [--json]
+krow work stop <workflowId> [reason] [--root <dir>] [--json]
 krow documents [message] [--root <dir>]
 krow review <workflowId> [unitId] [--root <dir>]
-krow start <message> [--intent <work|chat>] [--root <dir>]
-krow status <workflowId> [--root <dir>]
-krow next <workflowId> [--root <dir>]
-krow resume <workflowId> [--root <dir>]
-krow submit-phase <workflowId> <phase> <json|path|-> [--root <dir>]
-krow submit-decisions <workflowId> <json|path|-> [--root <dir>]
-krow stop <workflowId> [reason] [--root <dir>]
 ```
 
 ## Development
