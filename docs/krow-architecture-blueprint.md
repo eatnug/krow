@@ -200,7 +200,8 @@ startWork
 submit plan_output
   stores Goal, Spec, Plan, and optional Task Graph refs
   converts unresolved language questions into AskAction
-  advances to implement when the plan is ready
+  asks the user to review a ready plan before implementation
+  advances to implement only after plan review approval
 
 submit answers
   stores Answer artifacts

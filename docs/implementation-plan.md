@@ -289,7 +289,8 @@ Required behavior:
 startWork creates WorkflowState and first RunAction for plan_output.
 submit plan_output stores payload and returns AskAction when questions exist.
 submit answers stores Answer artifacts and returns the next RunAction.
-ready plan_output advances to implement.
+ready plan_output asks for user plan review before implement.
+approved plan review advances to implement.
 submit implement_output advances to review.
 review_output.passed true advances to DoneAction.
 review_output.passed false returns RunAction for implement when retry is useful.

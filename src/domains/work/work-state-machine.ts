@@ -12,6 +12,8 @@ import {
   type ReviewOutput,
 } from "./work-output-contracts.js";
 
+const PLAN_REVIEW_QUESTION_ID = "plan-review";
+
 export interface StateMachineResult {
   state?: WorkWorkflowState;
   fault?: WorkAction;
@@ -77,6 +79,39 @@ function approvalAnswerAccepted(value: string): boolean {
     return false;
   }
   return /^(approve|approved|yes|y|ok|accept|accepted|승인|네|예|ㅇㅇ|좋아)/.test(normalized);
+}
+
+function planReviewQuestion(output: PlanOutput): NonNullable<PlanOutput["questions"]> {
+  const taskIds = (output.tasks ?? []).map((task) => task.id).join(", ") || "(single work item)";
+  return [{
+    id: PLAN_REVIEW_QUESTION_ID,
+    question: "Review and approve the planned scope before implementation.",
+    context: [
+      `Summary: ${output.summary}`,
+      `Tasks: ${taskIds}`,
+      `Goal: ${output.docs.goal ?? "(not provided)"}`,
+      `Spec: ${output.docs.spec ?? "(not provided)"}`,
+      `Plan: ${output.docs.plan ?? "(not provided)"}`,
+      "Answer approve to proceed to implementation, or describe the revisions needed before implementation.",
+    ].join("\n"),
+    options: ["approve", "revise"],
+  }];
+}
+
+function isPlanReviewAsk(state: WorkWorkflowState): boolean {
+  const questions = state.pending_questions ?? [];
+  return questions.length === 1 && questions[0]?.id === PLAN_REVIEW_QUESTION_ID;
+}
+
+function planReviewAccepted(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (/\b(?:but|except|revise|change|adjust|modify|instead)\b/.test(normalized)) {
+    return false;
+  }
+  if (/(수정|변경|바꿔|다만|근데|하지만|대신|추가)/.test(value)) {
+    return false;
+  }
+  return approvalAnswerAccepted(value);
 }
 
 function approvedLanguageUpdatesFromAnswers(
@@ -171,13 +206,13 @@ function nextAfterPlan(state: WorkWorkflowState, output: PlanOutput): WorkWorkfl
   if ((output.questions?.length ?? 0) > 0 || !output.ready) {
     return withAsk(state, output.questions ?? [], "plan");
   }
-  return withRun(
+  return withAsk(
     {
       ...state,
       tasks: plannedTasksToState(output.tasks),
     },
-    "implement",
-    "implement_output",
+    planReviewQuestion(output),
+    "plan",
   );
 }
 
@@ -296,6 +331,22 @@ export function submitWorkPayload(state: WorkWorkflowState, payload: unknown): S
         "answers",
         state.current.output_path,
       );
+      if (state.phase === "plan" && isPlanReviewAsk(state)) {
+        const answer = validation.value.answers.find((item) => item.question_id === PLAN_REVIEW_QUESTION_ID);
+        if (answer && planReviewAccepted(answer.answer)) {
+          return { state: withRun(recorded, "implement", "implement_output") };
+        }
+        return {
+          state: withRun(
+            {
+              ...recorded,
+              tasks: [],
+            },
+            "plan",
+            "plan_output",
+          ),
+        };
+      }
       if (
         state.phase === "review" &&
         state.pending_review_result?.passed &&

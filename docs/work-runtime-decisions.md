@@ -350,7 +350,7 @@ Meaning:
 
 ```text
 ready
-  true when goal, product behavior, use cases, and plan are clear enough to implement.
+  true when goal, product behavior, use cases, and plan are clear enough for user review before implementation.
 
 docs
   Paths to Work Docs created or updated during planning.
@@ -366,6 +366,8 @@ evidence
 
 questions
   Product, language, use-case, or technical questions that need user input before implementation.
+
+Ready plans still require a plan-review AskAction. Repository evidence can resolve facts, but the user approves intent, scope, acceptance criteria, and implementation direction before the workflow enters implement.
 ```
 
 ### implement_output
@@ -563,7 +565,8 @@ Each state returns either `run`, `ask`, `done`, or `fault`.
 plan
   run plan_output
   ask when goal language, product behavior, use cases, or plan need user answer
-  next implement when plan_output.ready is true
+  ask for plan review when plan_output.ready is true
+  next implement only after the user approves the reviewed plan
 
 implement
   run implement_output

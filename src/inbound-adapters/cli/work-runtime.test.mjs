@@ -29,6 +29,31 @@ function writeJson(rootDir, ref, value) {
   writeFileSync(filePath, JSON.stringify(value, null, 2), "utf8");
 }
 
+function submitWorkflow(workflowId, inputPath, rootDir) {
+  return runJson([
+    "work",
+    "submit",
+    workflowId,
+    "--input",
+    inputPath,
+    "--root",
+    rootDir,
+    "--json",
+  ]);
+}
+
+function approvePlan(rootDir, workflowId, planReviewAction) {
+  assert.equal(planReviewAction.type, "ask");
+  assert.equal(planReviewAction.questions[0].id, "plan-review");
+  writeJson(rootDir, planReviewAction.output.path, {
+    answers: [{
+      question_id: "plan-review",
+      answer: "approve",
+    }],
+  });
+  return submitWorkflow(workflowId, planReviewAction.output.path, rootDir);
+}
+
 test("work runtime advances plan -> implement -> review -> done", () => {
   const rootDir = mkdtempSync(path.join(tmpdir(), "krow-work-runtime-"));
 
@@ -72,16 +97,11 @@ test("work runtime advances plan -> implement -> review -> done", () => {
     questions: [],
   });
 
-  const implementAction = runJson([
-    "work",
-    "submit",
-    "runtime-test",
-    "--input",
-    planAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const planReviewAction = submitWorkflow("runtime-test", planAction.output.path, rootDir);
+  assert.equal(planReviewAction.type, "ask");
+  assert.match(planReviewAction.questions[0].context, /Plan is ready/);
+
+  const implementAction = approvePlan(rootDir, "runtime-test", planReviewAction);
   assert.equal(implementAction.type, "run");
   assert.equal(implementAction.output.kind, "implement_output");
 
@@ -92,16 +112,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
     questions: [],
   });
 
-  const reviewAction = runJson([
-    "work",
-    "submit",
-    "runtime-test",
-    "--input",
-    implementAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const reviewAction = submitWorkflow("runtime-test", implementAction.output.path, rootDir);
   assert.equal(reviewAction.type, "run");
   assert.equal(reviewAction.output.kind, "review_output");
 
@@ -114,16 +125,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
     questions: [],
   });
 
-  const doneAction = runJson([
-    "work",
-    "submit",
-    "runtime-test",
-    "--input",
-    reviewAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const doneAction = submitWorkflow("runtime-test", reviewAction.output.path, rootDir);
   assert.equal(doneAction.type, "done");
   assert.equal(doneAction.status, "completed");
 
@@ -131,6 +133,60 @@ test("work runtime advances plan -> implement -> review -> done", () => {
   assert.equal(state.phase, "review");
   assert.equal(state.status, "completed");
   assert.deepEqual(state.language_context.refs, [".krow/system/glossary.md", ".krow/system/map.md"]);
+});
+
+test("plan review revision returns to planning instead of implementation", () => {
+  const rootDir = mkdtempSync(path.join(tmpdir(), "krow-plan-review-"));
+
+  runCli(["init", "--agents", "none", "--root", rootDir]);
+
+  const planAction = runJson([
+    "work",
+    "start",
+    "Clarify broad behavior",
+    "--work-id",
+    "plan-review",
+    "--root",
+    rootDir,
+    "--json",
+  ]);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-review/goal.md",
+      spec: ".krow/work/plan-review/spec.md",
+      plan: ".krow/work/plan-review/plan.md",
+    },
+    summary: "Plan needs user review.",
+    evidence: ["plan"],
+    tasks: [{
+      id: "draft",
+      title: "Draft",
+      scope: "Draft implementation",
+      files: ["src/draft.ts"],
+      expected_output: "Draft change",
+    }],
+    questions: [],
+  });
+
+  const reviewAction = submitWorkflow("plan-review", planAction.output.path, rootDir);
+  assert.equal(reviewAction.type, "ask");
+  assert.equal(reviewAction.questions[0].id, "plan-review");
+
+  writeJson(rootDir, reviewAction.output.path, {
+    answers: [{
+      question_id: "plan-review",
+      answer: "ok but revise the acceptance criteria first",
+    }],
+  });
+
+  const revisedPlanAction = submitWorkflow("plan-review", reviewAction.output.path, rootDir);
+  assert.equal(revisedPlanAction.type, "run");
+  assert.equal(revisedPlanAction.output.kind, "plan_output");
+
+  const state = JSON.parse(readFileSync(path.join(rootDir, ".krow/state/workflows/plan-review/state.json"), "utf8"));
+  assert.deepEqual(state.tasks, []);
 });
 
 test("review language updates require approval before durable system writes", () => {
@@ -162,16 +218,8 @@ test("review language updates require approval before durable system writes", ()
     questions: [],
   });
 
-  const implementAction = runJson([
-    "work",
-    "submit",
-    "language-approval",
-    "--input",
-    planAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const planReviewAction = submitWorkflow("language-approval", planAction.output.path, rootDir);
+  const implementAction = approvePlan(rootDir, "language-approval", planReviewAction);
 
   writeJson(rootDir, implementAction.output.path, {
     summary: "Implementation completed.",
@@ -180,16 +228,7 @@ test("review language updates require approval before durable system writes", ()
     questions: [],
   });
 
-  const reviewAction = runJson([
-    "work",
-    "submit",
-    "language-approval",
-    "--input",
-    implementAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const reviewAction = submitWorkflow("language-approval", implementAction.output.path, rootDir);
 
   writeJson(rootDir, reviewAction.output.path, {
     passed: true,
@@ -205,16 +244,7 @@ test("review language updates require approval before durable system writes", ()
     questions: [],
   });
 
-  const approvalAction = runJson([
-    "work",
-    "submit",
-    "language-approval",
-    "--input",
-    reviewAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const approvalAction = submitWorkflow("language-approval", reviewAction.output.path, rootDir);
   assert.equal(approvalAction.type, "ask");
   assert.equal(approvalAction.questions[0].id, "language-update-1");
   assert.ok(existsSync(path.join(rootDir, ".krow/work/language-approval/language-updates.md")));
@@ -228,16 +258,7 @@ test("review language updates require approval before durable system writes", ()
     }],
   });
 
-  const doneAction = runJson([
-    "work",
-    "submit",
-    "language-approval",
-    "--input",
-    approvalAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const doneAction = submitWorkflow("language-approval", approvalAction.output.path, rootDir);
   assert.equal(doneAction.type, "done");
   assert.equal(doneAction.status, "completed");
 
@@ -294,16 +315,7 @@ test("task graph validation enforces ownership and exposes ready task docs", () 
     questions: [],
   });
 
-  const faultAction = runJson([
-    "work",
-    "submit",
-    "task-graph",
-    "--input",
-    planAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const faultAction = submitWorkflow("task-graph", planAction.output.path, rootDir);
   assert.equal(faultAction.type, "fault");
   assert.match(faultAction.issues.join("\n"), /both own src\/shared\.ts without a merge_plan/);
 
@@ -336,16 +348,11 @@ test("task graph validation enforces ownership and exposes ready task docs", () 
     questions: [],
   });
 
-  const implementAction = runJson([
-    "work",
-    "submit",
-    "task-graph",
-    "--input",
-    planAction.output.path,
-    "--root",
-    rootDir,
-    "--json",
-  ]);
+  const planReviewAction = submitWorkflow("task-graph", planAction.output.path, rootDir);
+  assert.equal(planReviewAction.type, "ask");
+  assert.equal(planReviewAction.questions[0].id, "plan-review");
+
+  const implementAction = approvePlan(rootDir, "task-graph", planReviewAction);
   assert.equal(implementAction.type, "run");
   assert.equal(implementAction.output.kind, "implement_output");
   assert.match(implementAction.instruction, /Ready task ids: api, web/);

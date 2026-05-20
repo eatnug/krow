@@ -43,6 +43,7 @@ function instructionFor(kind: WorkOutputKind, state: WorkWorkflowState): string 
         "Express the request in approved or proposed project language.",
         "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, optional tasks, and optional questions.",
         "Use questions only for product meaning, project language, scope, acceptance criteria, approval, or technical choices that repository evidence cannot settle.",
+        "A ready plan still goes through user review before implementation; do not treat planning as implementation approval.",
       ].join(" ");
     case "implement_output":
       return [
