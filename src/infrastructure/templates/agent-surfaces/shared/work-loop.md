@@ -9,7 +9,7 @@ Parse the JSON response.
 
 Each work step is WorkAction -> agent work -> submitted output.
 
-Read the returned context refs and the current instruction. Gather repository evidence when it is needed for the requested output. Ask the user when the missing context is a product meaning decision, approval, scope decision, or externally unknowable fact.
+Read the returned context refs and the current instruction. Gather repository evidence when it is needed for the requested output. Before depending on Goal, Spec, or Plan wording, classify requirements, project language, and document wording as confirmed by the user request, prior answers, or repository evidence; keep remaining gaps as explicit open questions or missing premises. Ask the user when the missing context is a product meaning decision, approval, scope decision, language decision, acceptance criterion, implementation boundary, or externally unknowable fact.
 
 When work changes project language, plans, specs, glossary, maps, or other durable project documents, edit the actual target refs directly. Use the existing files such as `goal.md`, `spec.md`, `plan.md`, `.krow/system/glossary.md`, and `.krow/system/map.md` as the review surface. The user-facing loop is: update the actual document, ask for review, continue on approval, revise the same document on rejection or redirection.
 

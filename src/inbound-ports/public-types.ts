@@ -10,6 +10,8 @@ export type { Answer, AnswerPayload, Question } from "../domains/work/questions.
 export type { PlannedTask, TaskState } from "../domains/work/task-graph.js";
 export type {
   ImplementOutput,
+  PlanClarificationReview,
+  PlanDocumentClarification,
   PlanLanguageReview,
   PlanLanguageTerm,
   PlanOutput,

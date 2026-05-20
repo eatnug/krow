@@ -331,6 +331,7 @@ interface PlanOutput {
   tasks?: PlannedTask[];
   evidence?: string[];
   language?: PlanLanguageReview;
+  clarification?: PlanClarificationReview;
   questions?: Question[];
 }
 
@@ -345,6 +346,23 @@ interface PlanLanguageTerm {
   term: string;
   meaning: string;
   evidence?: string[];
+}
+
+interface PlanClarificationReview {
+  confirmed_requirements?: string[];
+  confirmed_language?: string[];
+  documents?: PlanDocumentClarification[];
+  open_questions?: string[];
+  missing_premises?: string[];
+  notes?: string[];
+}
+
+interface PlanDocumentClarification {
+  doc: "goal" | "spec" | "plan" | "tasks" | "glossary" | "map" | "system-doc";
+  ref: string;
+  confirmed_by?: string[];
+  open_questions?: string[];
+  missing_premises?: string[];
 }
 
 interface PlannedTask {
@@ -380,6 +398,9 @@ evidence
 
 language
   Required before `ready` is true. Lists approved terms used by the plan and actual Work or Language System refs updated for user review before implementation. Unresolved language gaps belong in `questions`, not in a ready plan.
+
+clarification
+  Required before `ready` is true. Separates confirmed requirements, confirmed project language, and Goal/Spec/Plan document agreement from open questions and missing premises. A ready plan has confirmed requirements or language, includes document agreement entries for Goal, Spec, and Plan, and keeps remaining gaps in `questions` before the plan enters review.
 
 questions
   Product, language, use-case, or technical questions that need user input before implementation.
@@ -580,6 +601,9 @@ plan
   run plan_output
   ask when goal language, product behavior, use cases, or plan need user answer
   require plan_output.language before plan_output.ready is accepted
+  require plan_output.clarification before plan_output.ready is accepted
+  require Goal, Spec, and Plan document agreement inside plan_output.clarification before ready is accepted
+  keep ready plan_output and document agreement free of open clarification questions or missing premises
   ask for project-language and plan review when plan_output.ready is true
   next implement only after the user approves the reviewed plan
 
@@ -806,7 +830,8 @@ Greenfield behavior:
 ```text
 Start from an empty or seed Language System.
 Use user request, repository evidence, README files, manifests, entry points, tests, and visible application structure to propose initial terms and system map entries.
-Ask when meaning affects implementation or verification.
+Before depending on Goal, Spec, or Plan wording, classify requirement, language, and document premises as confirmed by the user request, prior answers, or repository evidence.
+Ask when meaning affects implementation, verification, project language, acceptance criteria, or scope.
 Update the actual Glossary, System Map, or System Documents during plan when the current work needs new project language, then ask the user to review those changed docs before implementation.
 ```
 

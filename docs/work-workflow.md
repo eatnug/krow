@@ -88,15 +88,17 @@ interpret the user request through approved Glossary terms
 identify meaningful objects, actions, states, artifacts, roles, and boundaries
 match request language to System Map areas and System Documents
 inspect repository evidence when the Language System is empty, missing, or uncertain
+resolve ambiguity before depending on Goal, Spec, or Plan wording
 draft Goal, Spec, and Plan using approved project language and direct updates to actual Language System docs when new terms or map entries are needed
 include approved terms and changed language refs in ready `plan_output`
+include a clarification review that separates confirmed requirements, confirmed language, and Goal/Spec/Plan document agreement from open questions or missing premises
 emit questions when accepted meaning affects implementation or verification
 send a ready plan through project-language and scope review before implementation starts
 ```
 
 When new reusable meaning is needed for the current work, `plan` updates the actual `.krow/system` docs before implementation depends on it. The plan-review AskAction points the user at those changed docs; rejection sends the workflow back to planning so the same docs can be revised.
 
-`plan` can organize repository evidence and propose concrete language, scope, acceptance criteria, and task boundaries. It does not approve its own interpretation. A ready plan means the language and plan are reviewable; implementation begins only after the user approves the planned project language and scope or sends revisions back into planning.
+`plan` can organize repository evidence and propose concrete language, scope, acceptance criteria, and task boundaries. It does not approve its own interpretation. A ready plan means the language and plan are reviewable, confirmed requirements are explicit, Goal/Spec/Plan wording has a confirmation basis, and open questions or missing premises have already been turned into user questions. Implementation begins only after the user approves the planned project language and scope or sends revisions back into planning.
 
 ### implement
 

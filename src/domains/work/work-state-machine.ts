@@ -80,7 +80,7 @@ function languageReviewLines(output: PlanOutput): string[] {
 
   const lines = ["Project language:"];
   if (language.approved_terms?.length) {
-    lines.push(`- Approved terms used: ${language.approved_terms.join(", ")}`);
+    lines.push(`- Terms used in the plan: ${language.approved_terms.join(", ")}`);
   }
   if (language.updated_refs?.length) {
     lines.push(`- Updated language refs: ${language.updated_refs.join(", ")}`);
@@ -97,6 +97,50 @@ function languageReviewLines(output: PlanOutput): string[] {
   return lines;
 }
 
+function clarificationReviewLines(output: PlanOutput): string[] {
+  const clarification = output.clarification;
+  if (!clarification) {
+    return ["Clarification review: (not provided)"];
+  }
+
+  const lines = ["Clarification review:"];
+  if (clarification.confirmed_requirements?.length) {
+    lines.push("- Confirmed requirements:");
+    lines.push(...clarification.confirmed_requirements.map((item) => `  - ${item}`));
+  }
+  if (clarification.confirmed_language?.length) {
+    lines.push("- Confirmed language:");
+    lines.push(...clarification.confirmed_language.map((item) => `  - ${item}`));
+  }
+  if (clarification.documents?.length) {
+    lines.push("- Document agreement:");
+    clarification.documents.forEach((doc) => {
+      lines.push(`  - ${doc.doc}: ${doc.ref}`);
+      if (doc.confirmed_by?.length) {
+        lines.push(`    Confirmed by: ${doc.confirmed_by.join("; ")}`);
+      }
+      if (doc.open_questions?.length) {
+        lines.push(`    Open questions: ${doc.open_questions.join("; ")}`);
+      }
+      if (doc.missing_premises?.length) {
+        lines.push(`    Missing premises: ${doc.missing_premises.join("; ")}`);
+      }
+    });
+  }
+  if (clarification.open_questions?.length) {
+    lines.push("- Open questions:");
+    lines.push(...clarification.open_questions.map((item) => `  - ${item}`));
+  }
+  if (clarification.missing_premises?.length) {
+    lines.push("- Missing premises:");
+    lines.push(...clarification.missing_premises.map((item) => `  - ${item}`));
+  }
+  if (clarification.notes?.length) {
+    lines.push(...clarification.notes.map((note) => `- ${note}`));
+  }
+  return lines;
+}
+
 function planReviewQuestion(output: PlanOutput, state: WorkWorkflowState): NonNullable<PlanOutput["questions"]> {
   const taskIds = (output.tasks ?? []).map((task) => task.id).join(", ") || "(single work item)";
   const gaps = state.language_context?.gaps ?? [];
@@ -107,6 +151,7 @@ function planReviewQuestion(output: PlanOutput, state: WorkWorkflowState): NonNu
       `Summary: ${output.summary}`,
       ...(gaps.length ? [`Language context gaps: ${gaps.join("; ")}`] : []),
       ...languageReviewLines(output),
+      ...clarificationReviewLines(output),
       `Tasks: ${taskIds}`,
       `Goal: ${output.docs.goal ?? "(not provided)"}`,
       `Spec: ${output.docs.spec ?? "(not provided)"}`,
@@ -155,6 +200,63 @@ function readyPlanLanguageIssues(output: PlanOutput): string[] {
     return ["ready plan_output cannot include unresolved language terms; ask questions or update the actual language docs for user review"];
   }
   return [];
+}
+
+function readyPlanClarificationIssues(output: PlanOutput): string[] {
+  if (!output.ready || (output.questions?.length ?? 0) > 0) {
+    return [];
+  }
+
+  if (!output.clarification) {
+    return ["plan_output.clarification is required before ready so missing requirements, project language, and premises are explicit before implementation review"];
+  }
+
+  const clarificationItemCount =
+    (output.clarification.confirmed_requirements?.length ?? 0) +
+    (output.clarification.confirmed_language?.length ?? 0) +
+    (output.clarification.notes?.length ?? 0);
+
+  if (clarificationItemCount === 0) {
+    return ["plan_output.clarification must include confirmed requirements, confirmed language, or notes before ready"];
+  }
+
+  const documents = output.clarification.documents ?? [];
+  const documentsByKind = new Map(documents.map((doc) => [doc.doc, doc]));
+  const requiredDocs: Array<"goal" | "spec" | "plan"> = ["goal", "spec", "plan"];
+  const missingDocs = requiredDocs.filter((doc) => !documentsByKind.has(doc));
+  const issues: string[] = [];
+  if (missingDocs.length > 0) {
+    issues.push(`plan_output.clarification.documents must include ${missingDocs.join(", ")} before ready`);
+  }
+  requiredDocs.forEach((doc) => {
+    const review = documentsByKind.get(doc);
+    if (!review) {
+      return;
+    }
+    const expectedRef = output.docs[doc];
+    if (expectedRef && review.ref !== expectedRef) {
+      issues.push(`clarification.documents ${doc} ref must match docs.${doc}`);
+    }
+    if ((review.confirmed_by?.length ?? 0) === 0) {
+      issues.push(`${doc}.md must state what confirms its language and requirements before ready`);
+    }
+    if ((review.open_questions?.length ?? 0) > 0) {
+      issues.push(`${doc}.md has open questions; ask the user before ready`);
+    }
+    if ((review.missing_premises?.length ?? 0) > 0) {
+      issues.push(`${doc}.md has missing premises; resolve them through questions or evidence before ready`);
+    }
+  });
+
+  const openQuestions = output.clarification.open_questions ?? [];
+  const missingPremises = output.clarification.missing_premises ?? [];
+  if (openQuestions.length > 0) {
+    issues.push("ready plan_output must ask unresolved clarification questions before implementation review");
+  }
+  if (missingPremises.length > 0) {
+    issues.push("ready plan_output must resolve missing premises through questions or evidence before implementation review");
+  }
+  return issues;
 }
 
 function recordOutput(state: WorkWorkflowState, kind: PendingPayloadKind, path: string): WorkWorkflowState {
@@ -293,6 +395,17 @@ export function submitWorkPayload(state: WorkWorkflowState, payload: unknown): S
             state.workflow_id,
             "ready plan_output did not include project language review",
             languageIssues,
+            true,
+          ),
+        };
+      }
+      const clarificationIssues = readyPlanClarificationIssues(validation.value);
+      if (clarificationIssues.length > 0) {
+        return {
+          fault: faultAction(
+            state.workflow_id,
+            "ready plan_output did not include clarification review",
+            clarificationIssues,
             true,
           ),
         };

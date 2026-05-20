@@ -40,10 +40,13 @@ function instructionFor(kind: WorkOutputKind, state: WorkWorkflowState): string 
       return [
         "Plan this work item before editing project files.",
         "Read the Work Docs and relevant Language System refs, inspect repository evidence as needed, then update goal.md, spec.md, and plan.md.",
-        "Express the request in the actual project language documents; when terms or map entries are missing, update the relevant Language System refs directly.",
+        "Before depending on a drafted Goal, Spec, or Plan, resolve ambiguity that affects project language, requirements, scope, acceptance criteria, implementation direction, or verification.",
+        "Express the request in the actual project language documents; when terms or map entries are missing, update the relevant Language System refs directly after the needed meaning is clear enough to draft for review.",
         "Ask questions when missing project language, product meaning, scope, acceptance criteria, approval, or technical choices affect implementation or verification.",
-        "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, language, optional tasks, and optional questions.",
+        "Classify requirements, project language, and Goal/Spec/Plan document wording as confirmed by the user request, prior answers, or repository evidence; represent remaining gaps as open questions or missing premises.",
+        "Write plan_output JSON to the requested output path with ready, docs, summary, evidence, language, clarification, optional tasks, and optional questions.",
         "Before ready is true, update the actual docs and include plan_output.language as a review summary of terms used, document changes made, unresolved terms, or notes.",
+        "A ready plan includes plan_output.clarification with confirmed requirements, confirmed language, and Goal/Spec/Plan document agreement; it carries no open questions or missing premises.",
         "A ready plan goes through user review of the changed docs for project language, scope, acceptance criteria, and implementation direction before implementation.",
       ].join(" ");
     case "implement_output":

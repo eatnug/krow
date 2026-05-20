@@ -14,6 +14,23 @@ export interface PlanLanguageReview {
   notes?: string[];
 }
 
+export interface PlanClarificationReview {
+  confirmed_requirements?: string[];
+  confirmed_language?: string[];
+  documents?: PlanDocumentClarification[];
+  open_questions?: string[];
+  missing_premises?: string[];
+  notes?: string[];
+}
+
+export interface PlanDocumentClarification {
+  doc: "goal" | "spec" | "plan" | "tasks" | "glossary" | "map" | "system-doc";
+  ref: string;
+  confirmed_by?: string[];
+  open_questions?: string[];
+  missing_premises?: string[];
+}
+
 export interface PlanOutput {
   ready: boolean;
   docs: {
@@ -26,6 +43,7 @@ export interface PlanOutput {
   tasks?: PlannedTask[];
   evidence?: string[];
   language?: PlanLanguageReview;
+  clarification?: PlanClarificationReview;
   questions?: Question[];
 }
 
@@ -239,6 +257,54 @@ function validatePlanLanguage(value: unknown): string[] {
   return issues;
 }
 
+function validatePlanClarification(value: unknown): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isRecord(value)) {
+    return ["clarification must be an object when present"];
+  }
+
+  const issues: string[] = [];
+  [
+    "confirmed_requirements",
+    "confirmed_language",
+    "open_questions",
+    "missing_premises",
+    "notes",
+  ].forEach((key) => {
+    if (value[key] !== undefined && !isStringArray(value[key])) {
+      issues.push(`clarification.${key} must be an array of non-empty strings when present`);
+    }
+  });
+  if (value.documents !== undefined) {
+    if (!Array.isArray(value.documents)) {
+      issues.push("clarification.documents must be an array when present");
+    } else {
+      const allowedDocs = new Set(["goal", "spec", "plan", "tasks", "glossary", "map", "system-doc"]);
+      value.documents.forEach((item, index) => {
+        const itemPath = `clarification.documents[${index}]`;
+        if (!isRecord(item)) {
+          issues.push(`${itemPath} must be an object`);
+          return;
+        }
+        if (!isNonEmptyString(item.doc) || !allowedDocs.has(item.doc)) {
+          issues.push(`${itemPath}.doc must be one of goal, spec, plan, tasks, glossary, map, system-doc`);
+        }
+        if (!isNonEmptyString(item.ref)) {
+          issues.push(`${itemPath}.ref must be a non-empty string`);
+        }
+        ["confirmed_by", "open_questions", "missing_premises"].forEach((key) => {
+          if (item[key] !== undefined && !isStringArray(item[key])) {
+            issues.push(`${itemPath}.${key} must be an array of non-empty strings when present`);
+          }
+        });
+      });
+    }
+  }
+  return issues;
+}
+
 export function validatePlanOutput(value: unknown): ContractValidationResult<PlanOutput> {
   if (!isRecord(value)) {
     return { ok: false, issues: ["plan_output must be an object"] };
@@ -264,6 +330,7 @@ export function validatePlanOutput(value: unknown): ContractValidationResult<Pla
     issues.push("evidence must be an array of non-empty strings when present");
   }
   issues.push(...validatePlanLanguage(value.language));
+  issues.push(...validatePlanClarification(value.clarification));
   issues.push(...validateQuestions(value.questions, "questions"));
   issues.push(...validatePlannedTasks(value.tasks));
 

@@ -62,6 +62,41 @@ function languageReview(term = "Test Behavior") {
   };
 }
 
+function clarificationReview(term = "Test Behavior") {
+  return {
+    confirmed_requirements: [`${term} requirements are grounded in the user request or repository evidence.`],
+    confirmed_language: [`${term} language is present in the actual project documents for review.`],
+    documents: [
+      {
+        doc: "goal",
+        ref: ".krow/work/runtime-test/goal.md",
+        confirmed_by: [`${term} goal wording follows the user request or repository evidence.`],
+      },
+      {
+        doc: "spec",
+        ref: ".krow/work/runtime-test/spec.md",
+        confirmed_by: [`${term} spec wording follows the user request or repository evidence.`],
+      },
+      {
+        doc: "plan",
+        ref: ".krow/work/runtime-test/plan.md",
+        confirmed_by: [`${term} plan wording follows the user request or repository evidence.`],
+      },
+    ],
+  };
+}
+
+function clarificationForWork(workId, term = "Test Behavior") {
+  const review = clarificationReview(term);
+  return {
+    ...review,
+    documents: review.documents.map((doc) => ({
+      ...doc,
+      ref: `.krow/work/${workId}/${doc.doc}.md`,
+    })),
+  };
+}
+
 test("work runtime advances plan -> implement -> review -> done", () => {
   const rootDir = mkdtempSync(path.join(tmpdir(), "krow-work-runtime-"));
 
@@ -102,6 +137,7 @@ test("work runtime advances plan -> implement -> review -> done", () => {
     summary: "Plan is ready.",
     evidence: ["test"],
     language: languageReview(),
+    clarification: clarificationForWork("runtime-test"),
     tasks: [],
     questions: [],
   });
@@ -110,6 +146,9 @@ test("work runtime advances plan -> implement -> review -> done", () => {
   assert.equal(planReviewAction.type, "ask");
   assert.match(planReviewAction.questions[0].context, /Plan is ready/);
   assert.match(planReviewAction.questions[0].context, /Project language/);
+  assert.match(planReviewAction.questions[0].context, /Clarification review/);
+  assert.match(planReviewAction.questions[0].context, /Confirmed requirements/);
+  assert.match(planReviewAction.questions[0].context, /Document agreement/);
   assert.match(planReviewAction.questions[0].context, /Test Behavior/);
   assert.match(planReviewAction.questions[0].context, /Updated language refs/);
 
@@ -172,6 +211,7 @@ test("plan review revision returns to planning instead of implementation", () =>
     summary: "Plan needs user review.",
     evidence: ["plan"],
     language: languageReview("Draft Behavior"),
+    clarification: clarificationForWork("plan-review", "Draft Behavior"),
     tasks: [{
       id: "draft",
       title: "Draft",
@@ -251,6 +291,7 @@ test("ready plan requires language review before implementation review gate", ()
         evidence: ["plan"],
       }],
     },
+    clarification: clarificationForWork("plan-language", "Ambiguous Behavior"),
     tasks: [],
     questions: [],
   });
@@ -258,6 +299,117 @@ test("ready plan requires language review before implementation review gate", ()
   const unresolvedLanguageFault = submitWorkflow("plan-language", planAction.output.path, rootDir);
   assert.equal(unresolvedLanguageFault.type, "fault");
   assert.match(unresolvedLanguageFault.issues.join("\n"), /cannot include unresolved language terms/);
+});
+
+test("ready plan requires clarification review before implementation review gate", () => {
+  const rootDir = mkdtempSync(path.join(tmpdir(), "krow-plan-clarification-"));
+
+  runCli(["init", "--agents", "none", "--root", rootDir]);
+
+  const planAction = runJson([
+    "work",
+    "start",
+    "Clarify requirements before implementation",
+    "--work-id",
+    "plan-clarification",
+    "--root",
+    rootDir,
+    "--json",
+  ]);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-clarification/goal.md",
+      spec: ".krow/work/plan-clarification/spec.md",
+      plan: ".krow/work/plan-clarification/plan.md",
+    },
+    summary: "Plan skips clarification.",
+    evidence: ["plan"],
+    language: languageReview("Clarified Behavior"),
+    tasks: [],
+    questions: [],
+  });
+
+  const missingClarificationFault = submitWorkflow("plan-clarification", planAction.output.path, rootDir);
+  assert.equal(missingClarificationFault.type, "fault");
+  assert.match(missingClarificationFault.error, /clarification review/);
+  assert.match(missingClarificationFault.issues.join("\n"), /plan_output\.clarification is required/);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-clarification/goal.md",
+      spec: ".krow/work/plan-clarification/spec.md",
+      plan: ".krow/work/plan-clarification/plan.md",
+    },
+    summary: "Plan carries unresolved requirements.",
+    evidence: ["plan"],
+    language: languageReview("Clarified Behavior"),
+    clarification: {
+      confirmed_requirements: ["The current request needs a change."],
+      confirmed_language: ["The documents use the planned project language."],
+      documents: [
+        {
+          doc: "goal",
+          ref: ".krow/work/plan-clarification/goal.md",
+          confirmed_by: ["The goal follows the user request."],
+        },
+        {
+          doc: "spec",
+          ref: ".krow/work/plan-clarification/spec.md",
+          confirmed_by: ["The spec follows repository evidence."],
+          open_questions: ["Which acceptance criterion should define completion?"],
+        },
+        {
+          doc: "plan",
+          ref: ".krow/work/plan-clarification/plan.md",
+          confirmed_by: ["The plan follows repository evidence."],
+          missing_premises: ["The implementation boundary is not known from repository evidence."],
+        },
+      ],
+      open_questions: ["Which acceptance criterion should define completion?"],
+      missing_premises: ["The implementation boundary is not known from repository evidence."],
+    },
+    tasks: [],
+    questions: [],
+  });
+
+  const unresolvedClarificationFault = submitWorkflow("plan-clarification", planAction.output.path, rootDir);
+  assert.equal(unresolvedClarificationFault.type, "fault");
+  assert.match(unresolvedClarificationFault.issues.join("\n"), /unresolved clarification questions/);
+  assert.match(unresolvedClarificationFault.issues.join("\n"), /missing premises/);
+  assert.match(unresolvedClarificationFault.issues.join("\n"), /spec\.md has open questions/);
+  assert.match(unresolvedClarificationFault.issues.join("\n"), /plan\.md has missing premises/);
+
+  writeJson(rootDir, planAction.output.path, {
+    ready: true,
+    docs: {
+      goal: ".krow/work/plan-clarification/goal.md",
+      spec: ".krow/work/plan-clarification/spec.md",
+      plan: ".krow/work/plan-clarification/plan.md",
+    },
+    summary: "Plan omits document agreement.",
+    evidence: ["plan"],
+    language: languageReview("Clarified Behavior"),
+    clarification: {
+      confirmed_requirements: ["The current request needs a change."],
+      confirmed_language: ["The documents use the planned project language."],
+      documents: [
+        {
+          doc: "goal",
+          ref: ".krow/work/plan-clarification/goal.md",
+          confirmed_by: ["The goal follows the user request."],
+        },
+      ],
+    },
+    tasks: [],
+    questions: [],
+  });
+
+  const missingDocumentAgreementFault = submitWorkflow("plan-clarification", planAction.output.path, rootDir);
+  assert.equal(missingDocumentAgreementFault.type, "fault");
+  assert.match(missingDocumentAgreementFault.issues.join("\n"), /must include spec, plan/);
 });
 
 test("review does not create separate language update approval artifacts", () => {
@@ -286,6 +438,7 @@ test("review does not create separate language update approval artifacts", () =>
     summary: "Plan is ready.",
     evidence: ["src/payment.ts"],
     language: languageReview("Payment Retry"),
+    clarification: clarificationForWork("language-doc-review", "Payment Retry"),
     tasks: [],
     questions: [],
   });
@@ -343,6 +496,7 @@ test("task graph validation enforces ownership and exposes ready task docs", () 
     summary: "Invalid overlapping plan.",
     evidence: ["plan"],
     language: languageReview("Task Ownership"),
+    clarification: clarificationForWork("task-graph", "Task Ownership"),
     tasks: [
       {
         id: "api",
@@ -377,6 +531,7 @@ test("task graph validation enforces ownership and exposes ready task docs", () 
     summary: "Valid split plan.",
     evidence: ["plan"],
     language: languageReview("Task Ownership"),
+    clarification: clarificationForWork("task-graph", "Task Ownership"),
     tasks: [
       {
         id: "api",
