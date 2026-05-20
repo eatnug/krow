@@ -1,175 +1,96 @@
 # krow
 
-`krow` lets coding agents build software from repo-local documents: shared language, system description, work plan, code, and tests.
+`krow` is a harness for coding agents.
 
-## Use
+It gives agents:
 
-The npm package is `krow-cli`. It installs `krow-cli` and `krow`.
+- a shared language system
+- documents that compound across work
+- a state machine that drives the work deterministically
+
+The state machine keeps agents moving through the workflow we want instead of letting each session invent its own process.
+
+## Start
+
+Initialize krow in a repository:
 
 ```bash
-# 1. bootstrap krow in a repo
 npx --yes krow-cli@latest init
 ```
 
-Then open your coding agent and ask for work:
+Start the first session in your coding agent:
 
 ```text
-# in your coding agent
+$work Add paid subscription gating to daily recommendations.
+```
 
-$work I want to build a habit tracking app.
-$work Add login and paid subscription gating.
+krow starts a work item. The agent reads the current language and code evidence, then may ask:
+
+```text
+Should "Free User" mean no active subscription, or also an expired trial?
+When access is blocked, should the user see an Upgrade Prompt or a disabled state?
+```
+
+After the user answers, the agent writes:
+
+```text
+.krow/work/<work-id>/goal.md
+.krow/work/<work-id>/spec.md
+.krow/work/<work-id>/plan.md
+```
+
+Then it implements, verifies, writes `review.md`, and proposes reusable terms or system updates for approval.
+
+Use the same surface for later work:
+
+```text
+$work Build a habit tracking app.
 $work Fix the dashboard loading bug.
 ```
 
-## Work
+## What Happens
 
-`$work <request>` starts a new app, feature, fix, or refactor.
+`krow init` creates `.krow/` and installs small agent command files.
 
-Example:
-
-```text
-$work I want to build a habit tracking app.
-$work Free users should see an Upgrade Prompt when Daily Recommendation access is blocked.
-```
-
-Work Docs are stored under:
+`$work <request>` runs:
 
 ```text
-.krow/work/<work-id>/
-  index.md
-  goal.md
-  spec.md
-  plan.md
-  review.md
+plan -> implement -> review
 ```
 
-The intended loop is:
+The runner owns state and step order. The agent does the current step and submits evidence back to krow.
+
+When language is missing or unclear, the agent uses repository evidence or asks the user. Approved reusable meaning goes back into `.krow/system`.
+
+## Files
 
 ```text
-Glossary + System Map
-  -> Work Docs
-  -> Code / Tests
-  -> Review
-  -> proposed Glossary/System Map updates when meaning changed
+.krow/
+  system/
+    glossary.md
+    map.md
+    docs/
+  work/
+    <work-id>/
+      goal.md
+      spec.md
+      plan.md
+      review.md
+  state/
+    workflows/
 ```
 
-## Brownfield Check
+## More
 
-Use `$check` later when krow is added to an existing codebase.
-
-```text
-$check about: React app. Free and paid subscription states control feature access.
-```
-
-It runs a repository understanding session: collect evidence, write a reading plan, trace code, draft understanding, identify gaps, and apply only approved Glossary/System Map updates.
-
-## Document Shape
-
-Glossary terms define the words:
-
-```md
-## Free User
-
-ID: TERM:free-user
-Kind: Noun
-
-Meaning:
-A User without an active paid Subscription.
-
-Boundary:
-Does not include trial or paid users.
-```
-
-System Documents describe the software with those words:
-
-```md
-# Daily Recommendation Access
-
-ID: DOC:daily-recommendation-access
-Kind: Capability
-
-## Statements
-
-### Free User Access
-
-ID: STMT:daily-recommendation-access.free-user
-
-Statement:
-Free User is blocked from Daily Recommendation when Subscription is inactive.
-
-Terms:
-- TERM:free-user
-- TERM:daily-recommendation
-- TERM:subscription
-
-References:
-- source: src/recommendations/access.ts
-- test: src/recommendations/access.test.ts
-```
-
-## What It Creates
-
-```text
-.krow/system/glossary.md
-  agreed project words and meanings
-
-.krow/system/map.md
-  current map of the software
-
-.krow/system/docs/*.md
-  behavior, rules, structures, and responsibilities
-
-.krow/work/<work-id>/
-  Goal, Spec, Plan, optional Tasks, and Review for a change
-
-.krow/check/<check-id>/
-  evidence, reading plan, understanding drafts, decisions, and report
-```
-
-Design notes live in [docs/](docs/).
-
-## Runtime
-
-krow uses a deterministic runner with machine-readable WorkActions:
-
-- `run`: execute the current autonomous unit
-- `ask`: user input is required
-- `done`: workflow reached a terminal state
-- `fault`: runtime state or submitted payload is invalid
-
-Agents do not choose the global workflow order. The runner emits the current step, the agent performs that step, and the runner validates submitted output before state advances.
-
-## Commands
-
-```bash
-krow init [--agents <all|none|codex|claude|gemini>] [--root <dir>] [--force]
-krow check [description] [--about <text>] [--scope <path>] [--root <dir>]
-krow check-decisions <checkId> [--root <dir>]
-krow check-apply <checkId> <json|path|-> [--root <dir>]
-krow work start <request> [--root <dir>] [--work-id <id>] [--json]
-krow work submit <workflowId> --input <json|path|-> [--root <dir>] [--json]
-krow work next <workflowId> [--root <dir>] [--json]
-krow work status <workflowId> [--root <dir>] [--json]
-krow work stop <workflowId> [reason] [--root <dir>] [--json]
-krow documents [message] [--root <dir>]
-krow review <workflowId> [unitId] [--root <dir>]
-```
+Design notes and implementation details live in [docs/](docs/).
 
 ## Development
 
 ```bash
 npm install
 npm run typecheck
+npm test
 npm run build
-```
-
-`prepublishOnly` runs `npm run build`.
-
-## Publishing
-
-```bash
-npm version <patch|minor|major>
-npm publish
 ```
 
 ## License
